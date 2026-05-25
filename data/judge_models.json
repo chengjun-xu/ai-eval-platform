@@ -1,13 +1,1 @@
-[
-  {
-    "id": "deepseek-judge",
-    "name": "DeepSeek V4 Flash Judge",
-    "provider": "DeepSeek",
-    "api_base": "https://api.deepseek.com/v1",
-    "api_key": "***",
-    "model_name": "deepseek-v4-flash",
-    "description": "用于开放题评分的Judge模型",
-    "created_at": "2026-05-23 15:46",
-    "user": "admin"
-  }
-]
+[]

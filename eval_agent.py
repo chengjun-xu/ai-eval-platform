@@ -1,6 +1,6 @@
 """
 评测 Agent — 自然语言驱动的自动评测引擎
-支持解析"帮我评测 DeepSeek V4 Flash"等自然语言指令，
+支持解析"帮我评测模型"等自然语言指令，
 自动选择模型、Benchmark、Judge，编排并执行评测流程。
 """
 import json
