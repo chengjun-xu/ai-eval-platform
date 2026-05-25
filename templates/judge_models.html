@@ -54,30 +54,30 @@
     <h3>注册新 Judge 模型</h3>
     <span class="tag">Judge</span>
   </div>
-  <form method="post" action="{{ url_for('judge_models_add') }}" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+  <form method="post" action="{{ url_for('judge_models_add') }}" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem" autocomplete="off">
     <div>
       <label class="form-label">ID *</label>
-      <input type="text" name="id" required placeholder="如: gpt4-judge" class="form-input">
+      <input type="text" name="id" required placeholder="如: gpt4-judge" class="form-input" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
     </div>
     <div>
       <label class="form-label">名称 *</label>
-      <input type="text" name="name" required placeholder="如: GPT-4o Judge" class="form-input">
+      <input type="text" name="name" required placeholder="如: GPT-4o Judge" class="form-input" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
     </div>
     <div>
       <label class="form-label">提供商</label>
-      <input type="text" name="provider" placeholder="如: OpenAI, Anthropic" class="form-input">
+      <input type="text" name="provider" placeholder="如: OpenAI, Anthropic" class="form-input" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
     </div>
     <div>
       <label class="form-label">API 地址</label>
-      <input type="text" name="api_base" placeholder="如: https://api.example.com/v1" class="form-input">
+      <input type="text" name="api_base" placeholder="如: https://api.example.com/v1" class="form-input" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
     </div>
     <div>
       <label class="form-label">API Key</label>
-      <input type="password" name="api_key" placeholder="输入你的 API Key" class="form-input">
+      <input type="password" name="api_key" placeholder="输入你的 API Key" class="form-input" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')">
     </div>
     <div>
       <label class="form-label">模型名 *</label>
-      <input type="text" name="model_name" required placeholder="如: gpt-4o, claude-sonnet-4" class="form-input">
+      <input type="text" name="model_name" required placeholder="如: gpt-4o, claude-sonnet-4" class="form-input" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
     </div>
     <div style="grid-column:1/-1">
       <label class="form-label">描述</label>
