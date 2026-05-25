@@ -1032,4 +1032,12 @@ def agents_run():
 # 启动
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5001, debug=True)
+    print()
+    print("=" * 56)
+    print("  🚀  ByteBrain AI 评测平台")
+    print("  ────────────────────────────────")
+    print(f"  地址:  http://127.0.0.1:5001")
+    print(f"  退出:  按 Ctrl+C 停止服务器")
+    print("=" * 56)
+    print()
+    app.run(host="127.0.0.1", port=5001, debug=True, use_reloader=False)
