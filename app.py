@@ -12,7 +12,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, redirect, session, url_for, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from eval_runner import start_eval, get_run_status, list_completed_runs
+from eval_runner import start_eval, get_run_status, list_completed_runs, list_user_runs
 import eval_agent
 import uuid
 import shutil
@@ -197,12 +197,14 @@ def from_json_filter(val):
 
 @app.context_processor
 def inject_globals():
+    user = session.get("user", "")
+    my_runs = list_user_runs(user) if user else []
     return {
         "chr": chr,
         "sys_info": {
             "total_models": len(load_models()),
             "total_benchmarks": len(load_benchmarks()),
-            "total_eval_runs": len(list_completed_runs()),
+            "total_eval_runs": len(my_runs),
         },
         "judge_models": load_judge_models(),
     }
@@ -306,16 +308,16 @@ def register():
 def dashboard():
     models = load_models()
     benchmarks = load_benchmarks()
-    runs = list_completed_runs()
+    my_runs = list_user_runs(session["user"])
 
     # 计算统计
     total_models = len(models)
     total_benchmarks = len(benchmarks)
-    total_runs = len(runs)
+    total_runs = len(my_runs)
 
     # 总体平均分
     all_scores = []
-    for r in runs:
+    for r in my_runs:
         all_scores.append(r.get("overall_score", 0))
     avg_score = round(sum(all_scores) / len(all_scores), 1) if all_scores else 0
 
@@ -323,7 +325,7 @@ def dashboard():
     best_model_name = ""
     best_score = 0
     model_avgs = {}
-    for r in runs:
+    for r in my_runs:
         mn = r.get("model_name", "")
         sc = r.get("overall_score", 0)
         if mn not in model_avgs or sc > model_avgs[mn]:
@@ -340,11 +342,11 @@ def dashboard():
         avg_score=avg_score,
         best_model_name=best_model_name,
         best_score=best_score,
-        recent_runs=runs[-5:][::-1],  # 最新在前
+        recent_runs=my_runs[-5:][::-1],  # 最新在前
         models=models,
         benchmarks_json=json.dumps(benchmarks),
         models_json=json.dumps(models),
-        runs_json=json.dumps(runs),
+        runs_json=json.dumps(my_runs),
     )
 
 
@@ -439,7 +441,7 @@ def judge_models_delete(model_id: str):
 def benchmarks_page():
     benchmarks = load_benchmarks()
     models = load_models()
-    runs = list_completed_runs()
+    runs = list_user_runs(session["user"])
     return render_template(
         "benchmarks.html",
         benchmarks=benchmarks,
@@ -470,7 +472,7 @@ def eval_run():
         judge_models = load_judge_models()
         judge_model = next((jm for jm in judge_models if jm["id"] == judge_model_id), None)
 
-    run_id = start_eval(model, benchmark_ids, judge_model, quick_mode=quick_mode)
+    run_id = start_eval(model, benchmark_ids, judge_model, quick_mode=quick_mode, user=session["user"])
     return redirect(url_for("eval_status", run_id=run_id))
 
 
@@ -498,7 +500,7 @@ def api_eval_status(run_id: str):
 @app.route("/history")
 @login_required
 def history_page():
-    runs = list_completed_runs()
+    runs = list_user_runs(session["user"])
     models = load_models()
     benchmarks = load_benchmarks()
 
@@ -555,7 +557,7 @@ ICONS = {"MMLU": "🧠", "GSM8K": "🔢", "HumanEval": "💻", "OpenEval": "📝
 @app.route("/report/<model_name>")
 @login_required
 def report(model_name: str):
-    runs = list_completed_runs()
+    runs = list_user_runs(session["user"])
     # 过滤出该模型的所有运行
     model_runs = [r for r in runs if r.get("model_name", "") == model_name]
     if not model_runs:
@@ -719,7 +721,7 @@ def report(model_name: str):
 def compare_page():
     models = load_models()
     benchmarks = load_benchmarks()
-    runs = list_completed_runs()
+    runs = list_user_runs(session["user"])
 
     # 为有评测结果的模型补充分数数据和置信区间
     model_eval_scores = {}
@@ -1006,7 +1008,7 @@ def agents_run():
     if not prep["ok"]:
         return jsonify({"ok": False, "error": prep.get("error", "准备失败")}), 400
     
-    run_id = start_eval(prep["model"], prep["benchmark_ids"], prep.get("judge_model"))
+    run_id = start_eval(prep["model"], prep["benchmark_ids"], prep.get("judge_model"), user=session["user"])
     return jsonify({
         "ok": True,
         "run_id": run_id,

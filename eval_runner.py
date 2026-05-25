@@ -941,7 +941,8 @@ BENCHMARK_EVALS = {
 
 
 def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
-                   judge_model: dict | None = None, quick_mode: bool = False):
+                   judge_model: dict | None = None, quick_mode: bool = False,
+                   user: str = ""):
     """后台执行评测主函数"""
     try:
         with _lock:
@@ -1023,7 +1024,7 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
             _running_jobs[run_id]["progress"] = 100
 
         # 持久化到 JSON
-        _save_run(run_id, final)
+        _save_run(run_id, final, user=user)
 
     except Exception as e:
         with _lock:
@@ -1035,21 +1036,21 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
             }
 
 
-def _save_run(run_id: str, result: dict):
-    """将评测结果保存到 JSON 文件"""
+def _save_run(run_id: str, result: dict, user: str = ""):
+    """将评测结果保存到 JSON 文件（按用户隔离）"""
     runs_file = DATA_DIR / "eval_runs.json"
     runs = []
     if runs_file.exists():
         with open(runs_file, encoding="utf-8") as f:
             runs = json.load(f)
-    runs.append({"run_id": run_id, **result})
+    runs.append({"run_id": run_id, "user": user, **result})
     runs_file.parent.mkdir(parents=True, exist_ok=True)
     with open(runs_file, "w", encoding="utf-8") as f:
         json.dump(runs, f, ensure_ascii=False, indent=2)
 
 
 def start_eval(model: dict, benchmark_ids: list[str], judge_model: dict | None = None,
-               quick_mode: bool = False) -> str:
+               quick_mode: bool = False, user: str = "") -> str:
     """启动评测，返回 run_id"""
     import uuid
     run_id = f"run_{uuid.uuid4().hex[:8]}"
@@ -1062,7 +1063,7 @@ def start_eval(model: dict, benchmark_ids: list[str], judge_model: dict | None =
         }
     t = threading.Thread(
         target=run_evaluation,
-        args=(run_id, model, benchmark_ids, judge_model, quick_mode),
+        args=(run_id, model, benchmark_ids, judge_model, quick_mode, user),
         daemon=True,
     )
     t.start()
@@ -1086,10 +1087,16 @@ def get_run_status(run_id: str) -> Optional[dict]:
 
 
 def list_completed_runs() -> list:
-    """列出已完成的评测记录"""
+    """列出所有已完成的评测记录"""
     runs_file = DATA_DIR / "eval_runs.json"
     if not runs_file.exists():
         return []
     with open(runs_file, encoding="utf-8") as f:
         return json.load(f)
+
+
+def list_user_runs(username: str) -> list:
+    """列出指定用户已完成的评测记录"""
+    all_runs = list_completed_runs()
+    return [r for r in all_runs if r.get("user") == username]
 
