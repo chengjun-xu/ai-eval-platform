@@ -3,20 +3,5 @@
     "password": "scrypt:32768:8:1$mVr0lPRz6FmvUCoL$657628d0604d4bb45198db3dceb7be86b512ba7eccbb043a26f5698ed2d4aafaa690aa3d7c72c7ae210dfe4fcd90c53ae24644e9f39c8dbad96a8603d6f6332a",
     "name": "管理员",
     "role": "admin"
-  },
-  "asd": {
-    "password": "scrypt:32768:8:1$YctDn4FtjGzdufIX$26b7df1568aed301b745c001c8d3745f52a8c7019fc38783e8bc9ccbdc9a1fd18b89327c2a8b681d16688e99324c99527000f29805509af3fa1a36d29053ac75",
-    "name": "asd",
-    "role": "user"
-  },
-  "debuguser": {
-    "password": "scrypt:32768:8:1$ZMOc7x0jVWfOqhw7$45240063ef14654e21aa4a97e80bd03e7ae77ba58aaa009fc6406307dad1f7ba493ba1e3617a33e0a855449b4981c38c601be7ce30b3541cc147fe6ade7d00b2",
-    "name": "Debug",
-    "role": "user"
-  },
-  "finalclean": {
-    "password": "scrypt:32768:8:1$fMwmlew4JqFTj7d8$39144db2df17298d3db697fe81e06cbbffeb0d7e4a696fd160c2f80e5222b02c3b0a79e696ad31fdabd98546b1e2eb82cfa76535270d70c75c70613371c57236",
-    "name": "FinalClean",
-    "role": "user"
   }
 }
