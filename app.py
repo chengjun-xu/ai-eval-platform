@@ -63,13 +63,18 @@ def _ensure_file(path: Path, default: list | dict):
             json.dump(default, f, ensure_ascii=False, indent=2)
 
 
-def load_models() -> list:
+def load_models(user: str = "") -> list:
     _ensure_file(MODELS_FILE, [])
     with open(MODELS_FILE, encoding="utf-8") as f:
-        return json.load(f)
+        all_models = json.load(f)
+    if user:
+        return [m for m in all_models if m.get("user", "") == user]
+    return all_models
 
 
-def save_model(m: dict):
+def save_model(m: dict, user: str = ""):
+    if user:
+        m["user"] = user
     models = load_models()
     # 更新已有或追加
     for i, exist in enumerate(models):
@@ -91,13 +96,18 @@ def delete_model(model_id: str):
 
 # ---- Judge 模型管理 ---------------------------------------------------------
 
-def load_judge_models() -> list:
+def load_judge_models(user: str = "") -> list:
     _ensure_file(JUDGE_MODELS_FILE, [])
     with open(JUDGE_MODELS_FILE, encoding="utf-8") as f:
-        return json.load(f)
+        all_models = json.load(f)
+    if user:
+        return [m for m in all_models if m.get("user", "") == user]
+    return all_models
 
 
-def save_judge_model(m: dict):
+def save_judge_model(m: dict, user: str = ""):
+    if user:
+        m["user"] = user
     models = load_judge_models()
     for i, exist in enumerate(models):
         if exist["id"] == m["id"]:
@@ -202,11 +212,11 @@ def inject_globals():
     return {
         "chr": chr,
         "sys_info": {
-            "total_models": len(load_models()),
+            "total_models": len(load_models(user)),
             "total_benchmarks": len(load_benchmarks()),
             "total_eval_runs": len(my_runs),
         },
-        "judge_models": load_judge_models(),
+        "judge_models": load_judge_models(user),
     }
 
 # ---------------------------------------------------------------------------
@@ -306,9 +316,10 @@ def register():
 @app.route("/")
 @login_required
 def dashboard():
-    models = load_models()
+    u = session["user"]
+    models = load_models(u)
     benchmarks = load_benchmarks()
-    my_runs = list_user_runs(session["user"])
+    my_runs = list_user_runs(u)
 
     # 计算统计
     total_models = len(models)
@@ -354,7 +365,7 @@ def dashboard():
 @app.route("/models")
 @login_required
 def models_page():
-    models = load_models()
+    models = load_models(session["user"])
     benchmarks = load_benchmarks()
     return render_template(
         "models.html",
@@ -381,7 +392,7 @@ def models_add():
     }
     if not new_model["name"] or not new_model["id"]:
         return jsonify({"error": "模型名称和 ID 不能为空"}), 400
-    save_model(new_model)
+    save_model(new_model, session["user"])
     return redirect(url_for("models_page"))
 
 
@@ -397,8 +408,8 @@ def models_delete(model_id: str):
 @app.route("/judge-models")
 @login_required
 def judge_models_page():
-    models = load_models()
-    judge_models = load_judge_models()
+    models = load_models(session["user"])
+    judge_models = load_judge_models(session["user"])
     benchmarks = load_benchmarks()
     return render_template(
         "judge_models.html",
@@ -424,7 +435,7 @@ def judge_models_add():
     }
     if not new_model["name"] or not new_model["id"]:
         return jsonify({"error": "Judge 模型名称和 ID 不能为空"}), 400
-    save_judge_model(new_model)
+    save_judge_model(new_model, session["user"])
     return redirect(url_for("judge_models_page"))
 
 
@@ -440,7 +451,7 @@ def judge_models_delete(model_id: str):
 @login_required
 def benchmarks_page():
     benchmarks = load_benchmarks()
-    models = load_models()
+    models = load_models(session["user"])
     runs = list_user_runs(session["user"])
     return render_template(
         "benchmarks.html",
@@ -454,6 +465,7 @@ def benchmarks_page():
 @app.route("/eval/run", methods=["POST"])
 @login_required
 def eval_run():
+    u = session["user"]
     model_id = request.form.get("model_id", "").strip()
     benchmark_ids = request.form.getlist("benchmarks")
     judge_model_id = request.form.get("judge_model_id", "").strip()
@@ -462,14 +474,14 @@ def eval_run():
     if not model_id or not benchmark_ids:
         return jsonify({"error": "请选择模型和至少一个 Benchmark"}), 400
 
-    models = load_models()
+    models = load_models(u)
     model = next((m for m in models if m["id"] == model_id), None)
     if not model:
         return jsonify({"error": "模型不存在"}), 404
 
     judge_model = None
     if judge_model_id:
-        judge_models = load_judge_models()
+        judge_models = load_judge_models(u)
         judge_model = next((jm for jm in judge_models if jm["id"] == judge_model_id), None)
 
     run_id = start_eval(model, benchmark_ids, judge_model, quick_mode=quick_mode, user=session["user"])
@@ -501,7 +513,7 @@ def api_eval_status(run_id: str):
 @login_required
 def history_page():
     runs = list_user_runs(session["user"])
-    models = load_models()
+    models = load_models(session["user"])
     benchmarks = load_benchmarks()
 
     # 统计概要
@@ -719,7 +731,7 @@ def report(model_name: str):
 @app.route("/compare")
 @login_required
 def compare_page():
-    models = load_models()
+    models = load_models(session["user"])
     benchmarks = load_benchmarks()
     runs = list_user_runs(session["user"])
 
@@ -970,8 +982,8 @@ def datasets_preview(filename: str):
 @login_required
 def agents_page():
     """Agent 对话界面"""
-    models = load_models()
-    judge_models = load_judge_models()
+    models = load_models(session["user"])
+    judge_models = load_judge_models(session["user"])
     benchmarks = eval_agent.load_benchmarks()
     return render_template("agent.html", models=models, judge_models=judge_models,
                            benchmarks=benchmarks)

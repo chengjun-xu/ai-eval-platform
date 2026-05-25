@@ -3,5 +3,20 @@
     "password": "scrypt:32768:8:1$mVr0lPRz6FmvUCoL$657628d0604d4bb45198db3dceb7be86b512ba7eccbb043a26f5698ed2d4aafaa690aa3d7c72c7ae210dfe4fcd90c53ae24644e9f39c8dbad96a8603d6f6332a",
     "name": "管理员",
     "role": "admin"
+  },
+  "123": {
+    "password": "scrypt:32768:8:1$rApaYW3RR7Yq2NgB$e201c160efbb8903f53dc28a74b7122d78350946075d72732280d2346e6601dd7ae2c7331a9d391ee6823bcae225654257d35944839883442b3643bec47c2f7d",
+    "name": "chengjun",
+    "role": "user"
+  },
+  "zxc": {
+    "password": "scrypt:32768:8:1$vNsEomd520aSPrMR$38344e27cdecfc7d8470b969bf4f13c5226a39db9113a238377a9dbd9716243135c553aea423bb3e1aef872086beaed06097a5c64328ba502f729a7fd9975484",
+    "name": "zxc",
+    "role": "user"
+  },
+  "newuser2": {
+    "password": "scrypt:32768:8:1$8RvbM692PCt7C8TH$15476242fa7e3a88707ba5ca23b4fe3f345e99f44432ceded4b8de808455de28eccd89e4d386f3b54e8b082f222db6904dcd1361e4e0c41b2eba1fccf2dbde41",
+    "name": "测试新用户",
+    "role": "user"
   }
 }
