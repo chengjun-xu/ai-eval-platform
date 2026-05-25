@@ -1,7 +1,7 @@
 {
-  "testuser": {
-    "password": "scrypt:32768:8:1$w0YSypOoUBd35uTH$aab1d680c19f8111d78a03a3fd0b83d0adc2e25fa7ccb68bf14ce7f440e5d3ebf0b545dfc4a220c9b0abcbee194e214b1ad2b89eb94cdcc81bcf0c057823a243",
-    "name": "测试用户",
-    "role": "user"
+  "admin": {
+    "password": "scrypt:32768:8:1$mVr0lPRz6FmvUCoL$657628d0604d4bb45198db3dceb7be86b512ba7eccbb043a26f5698ed2d4aafaa690aa3d7c72c7ae210dfe4fcd90c53ae24644e9f39c8dbad96a8603d6f6332a",
+    "name": "管理员",
+    "role": "admin"
   }
 }
