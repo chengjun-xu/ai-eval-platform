@@ -1,0 +1,7 @@
+{
+  "testuser": {
+    "password": "scrypt:32768:8:1$w0YSypOoUBd35uTH$aab1d680c19f8111d78a03a3fd0b83d0adc2e25fa7ccb68bf14ce7f440e5d3ebf0b545dfc4a220c9b0abcbee194e214b1ad2b89eb94cdcc81bcf0c057823a243",
+    "name": "测试用户",
+    "role": "user"
+  }
+}

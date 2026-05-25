@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>注册 · AI 大模型评测平台</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-page">
+  <div class="login-card">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+      </svg>
+    </div>
+    <h1>创建账号</h1>
+    <p class="sub">注册后即可使用 AI 大模型评测平台</p>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post">
+      <div class="form-group">
+        <label for="username">用户名 <span class="hint-inline">（至少 3 个字符）</span></label>
+        <input type="text" id="username" name="username" placeholder="如：zhangsan" autocomplete="username" required autofocus>
+      </div>
+      <div class="form-group">
+        <label for="name">显示名称 <span class="hint-inline">（选填，默认同用户名）</span></label>
+        <input type="text" id="name" name="name" placeholder="如：张三" autocomplete="name">
+      </div>
+      <div class="form-group">
+        <label for="password">密码 <span class="hint-inline">（至少 6 个字符）</span></label>
+        <input type="password" id="password" name="password" placeholder="请设置密码" autocomplete="new-password" required>
+      </div>
+      <div class="form-group">
+        <label for="password2">确认密码</label>
+        <input type="password" id="password2" name="password2" placeholder="请再次输入密码" autocomplete="new-password" required>
+      </div>
+      <button type="submit" class="btn-primary">注册并登录</button>
+    </form>
+
+    <div class="register-link">
+      已有账号？<a href="{{ url_for('login') }}">返回登录</a>
+    </div>
+  </div>
+</body>
+</html>

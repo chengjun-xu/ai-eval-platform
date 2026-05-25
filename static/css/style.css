@@ -105,6 +105,21 @@ button { cursor: pointer; font-family: inherit; }
   border-radius: 3px; font-size: 0.85em;
 }
 
+.login-card .register-link {
+  text-align: center; margin-top: 1.25rem;
+  color: var(--text-secondary); font-size: 0.875rem;
+}
+.login-card .register-link a {
+  color: var(--accent); text-decoration: none; font-weight: 500;
+}
+.login-card .register-link a:hover {
+  color: var(--accent-hover); text-decoration: underline;
+}
+
+.hint-inline {
+  font-size: 0.75rem; color: var(--text-muted); font-weight: 400;
+}
+
 /* --- Layout -------------------------------------------------------------- */
 .app-layout { display: flex; min-height: 100vh; }
 

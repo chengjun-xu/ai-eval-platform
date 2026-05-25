@@ -10,6 +10,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, render_template, request, redirect, session, url_for, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from eval_runner import start_eval, get_run_status, list_completed_runs
 import eval_agent
@@ -207,13 +208,26 @@ def inject_globals():
     }
 
 # ---------------------------------------------------------------------------
-# 账号体系
+# 账号体系 (文件持久化 + 密码哈希)
 # ---------------------------------------------------------------------------
-USERS = {
-    "admin": {"password": "eval2025", "name": "评测管理员", "role": "admin"},
-    "alice": {"password": "hello123", "name": "Alice Chen",  "role": "engineer"},
-    "bob":   {"password": "pass456",  "name": "Bob Wang",    "role": "viewer"},
-}
+USERS_FILE = DATA_DIR / "users.json"
+
+
+def load_users() -> dict:
+    _ensure_file(USERS_FILE, {})
+    with open(USERS_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_user(username: str, password: str, name: str, role: str = "user"):
+    users = load_users()
+    users[username] = {
+        "password": generate_password_hash(password),
+        "name": name,
+        "role": role,
+    }
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
 
 
 def login_required(f):
@@ -233,8 +247,9 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
-        user = USERS.get(username)
-        if user and user["password"] == password:
+        users = load_users()
+        user = users.get(username)
+        if user and check_password_hash(user["password"], password):
             session["user"] = username
             session["name"] = user["name"]
             session["role"] = user["role"]
@@ -247,6 +262,42 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        password2 = request.form.get("password2", "").strip()
+        name = request.form.get("name", "").strip() or username
+
+        # 校验
+        errors = []
+        if not username or not password:
+            errors.append("用户名和密码不能为空")
+        if len(username) < 3:
+            errors.append("用户名至少 3 个字符")
+        if len(password) < 6:
+            errors.append("密码至少 6 个字符")
+        if password != password2:
+            errors.append("两次密码输入不一致")
+
+        users = load_users()
+        if username in users:
+            errors.append("用户名已存在，请换一个")
+
+        if errors:
+            return render_template("register.html", error="；".join(errors))
+
+        save_user(username, password, name)
+        # 直接登录
+        session["user"] = username
+        session["name"] = name
+        session["role"] = "user"
+        return redirect(url_for("dashboard"))
+
+    return render_template("register.html")
 
 
 # ---- 仪表盘 ----------------------------------------------------------------
