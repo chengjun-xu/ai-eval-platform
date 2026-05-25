@@ -18,5 +18,15 @@
     "password": "scrypt:32768:8:1$8RvbM692PCt7C8TH$15476242fa7e3a88707ba5ca23b4fe3f345e99f44432ceded4b8de808455de28eccd89e4d386f3b54e8b082f222db6904dcd1361e4e0c41b2eba1fccf2dbde41",
     "name": "测试新用户",
     "role": "user"
+  },
+  "zxa": {
+    "password": "scrypt:32768:8:1$Sp408EoF1k4PLTiq$2d37bfc0899ce75c2c933a3639d0f40a6602030d587040b86d33a40667ad8874755bfffddb907c3e95c2589b1866450e8da6a4907310dd90378bed75036de9d4",
+    "name": "zxa",
+    "role": "user"
+  },
+  "test99": {
+    "password": "scrypt:32768:8:1$mGY7zmRQJhG52R8k$c8a805018b4e7811bbc8e7a523ad42b3b7d8630099f8296163f11fb94f7aa50d39c6cc3abb4c2b2e44a2f333b6fc1ad2667a253cbf8ba2ff8a3b8c640f339936",
+    "name": "测试用户99",
+    "role": "user"
   }
 }

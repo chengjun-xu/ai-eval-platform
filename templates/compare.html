@@ -10,6 +10,15 @@
   </div>
 </div>
 
+{% if not models %}
+<div class="card" style="text-align:center;padding:3rem 2rem">
+  <div style="font-size:3rem;margin-bottom:1rem">📊</div>
+  <h3 style="margin-bottom:0.5rem">暂无模型数据</h3>
+  <p style="color:var(--text-muted);margin-bottom:1.5rem">请先在「模型管理」页面注册模型并运行评测</p>
+  <a href="{{ url_for('models_page') }}" class="btn-primary" style="display:inline-block;padding:0.6rem 2rem;text-decoration:none">去添加模型</a>
+</div>
+{% else %}
+
 <div class="compare-grid">
   <!-- 模型 A -->
   <div class="card">
@@ -75,7 +84,8 @@
   </div>
 </div>
 
-<!-- 统计显著性 -->{% if significance %}
+<!-- 统计显著性 -->
+{% if significance %}
 <div class="card mt-1">
   <div class="card-header">
     <h3>📊 统计显著性检验</h3>
@@ -152,6 +162,8 @@
   </div>
 </div>
 
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
@@ -159,6 +171,7 @@
   const MODELS = {{ models_json|safe }};
   const BENCHMARKS = {{ benchmarks_json|safe }};
 
+  {% if models %}
   let compareChart = null;
 
   function updateCompare() {
@@ -167,7 +180,6 @@
     const mA = MODELS.find(m => m.id === idA);
     const mB = MODELS.find(m => m.id === idB);
 
-    // 更新信息卡片
     function updateInfo(el, m) {
       const vals = Object.values(m.scores);
       const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
@@ -187,11 +199,9 @@
     updateInfo(document.getElementById('modelA-info'), mA);
     updateInfo(document.getElementById('modelB-info'), mB);
 
-    // 更新表头
     document.getElementById('headerA').textContent = mA.name;
     document.getElementById('headerB').textContent = mB.name;
 
-    // 更新表格数据
     const tbody = document.getElementById('compareTable');
     tbody.innerHTML = BENCHMARKS.map(bm => {
       const sa = mA.scores[bm.id];
@@ -208,7 +218,6 @@
       </tr>`;
     }).join('');
 
-    // 更新雷达图
     if (compareChart) compareChart.destroy();
     compareChart = renderCompareChart('compareRadar', mA, mB, BENCHMARKS);
   }
@@ -216,9 +225,9 @@
   document.getElementById('modelA').addEventListener('change', updateCompare);
   document.getElementById('modelB').addEventListener('change', updateCompare);
 
-  // 初始渲染
   const mA = MODELS.find(m => m.id === document.getElementById('modelA').value);
   const mB = MODELS.find(m => m.id === document.getElementById('modelB').value);
   compareChart = renderCompareChart('compareRadar', mA, mB, BENCHMARKS);
+  {% endif %}
 </script>
 {% endblock %}

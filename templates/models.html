@@ -27,19 +27,19 @@
       </div>
       <div class="form-group">
         <label>提供商</label>
-        <input type="text" name="provider" placeholder="例如: OpenAI / DeepSeek / 自研">
+        <input type="text" name="provider" placeholder="例如: OpenAI / 自研">
       </div>
       <div class="form-group">
         <label>API Base URL</label>
-        <input type="text" name="api_base" placeholder="例如: https://api.deepseek.com/v1" value="https://api.deepseek.com/v1">
+        <input type="text" name="api_base" placeholder="例如: https://api.example.com/v1" value="">
       </div>
       <div class="form-group">
         <label>API Key</label>
-        <input type="password" name="api_key" placeholder="sk-..." value="{{ 'sk-...' if models | length > 0 else '' }}">
+        <input type="password" name="api_key" placeholder="sk-..." value="">
       </div>
       <div class="form-group">
         <label>模型名称（发送给 API 的 model 参数）</label>
-        <input type="text" name="model_name" placeholder="例如: deepseek-chat" value="deepseek-chat">
+        <input type="text" name="model_name" placeholder="例如: gpt-4o" value="">
       </div>
       <div class="form-group">
         <label>描述（可选）</label>
@@ -101,9 +101,9 @@
   <div style="color:var(--text-secondary);font-size:0.9rem;line-height:1.8">
     <p><strong>1. API 模型（推荐）</strong> — 如果你的模型已部署并暴露 OpenAI 兼容 API：</p>
     <ul style="margin:0.5rem 0 0.5rem 1.5rem">
-      <li>填写 API Base URL（如 <code>https://api.deepseek.com/v1</code>）</li>
+      <li>填写 API Base URL（如 <code>https://api.example.com/v1</code>）</li>
       <li>填写 API Key</li>
-      <li>填写模型名称（如 <code>deepseek-chat</code>）</li>
+      <li>填写模型名称（如 <code>gpt-4o</code>）</li>
     </ul>
     <p><strong>2. 本地模型</strong> — 如果你的模型在本地运行（如通过 Ollama/vLLM 部署）：</p>
     <ul style="margin:0.5rem 0 0 1.5rem">
