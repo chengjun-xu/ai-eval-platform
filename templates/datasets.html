@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}数据集管理{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>📁 数据集管理</h2>
+    <p>上传、查看、管理评测数据集</p>
+  </div>
+</div>
+
+<!-- 上传区 -->
+<div class="card">
+  <div class="card-header">
+    <h3>上传数据集</h3>
+    <span class="tag status-completed">JSON</span>
+  </div>
+  <div id="uploadZone" style="border:2px dashed var(--border);border-radius:var(--radius);padding:2.5rem;text-align:center;cursor:pointer;transition:all 0.3s"
+       ondrop="handleDrop(event)" ondragover="event.preventDefault()" onclick="document.getElementById('fileInput').click()">
+    <div style="font-size:3rem;margin-bottom:0.5rem">📤</div>
+    <div style="font-size:1rem;font-weight:600;color:var(--text-primary)">拖拽 JSON 文件到此处</div>
+    <div style="font-size:0.85rem;color:var(--text-muted);margin-top:0.3rem">或点击选择文件</div>
+    <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFile(this.files[0])">
+  </div>
+  <div id="uploadForm" style="display:none;margin-top:1rem;padding:1rem;background:var(--bg-hover);border-radius:var(--radius-sm)">
+    <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap">
+      <span id="fileName" style="font-weight:600"></span>
+      <input type="text" id="datasetName" placeholder="数据集名称（可选）" style="flex:1;padding:0.5rem 0.7rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.85rem;outline:none;min-width:200px">
+      <button onclick="uploadDataset()" class="btn-primary" style="width:auto;padding:0.5rem 1.5rem">⬆️ 上传</button>
+      <button onclick="cancelUpload()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem">取消</button>
+    </div>
+    <div id="uploadStatus" style="font-size:0.85rem;margin-top:0.5rem;color:var(--text-muted)"></div>
+  </div>
+</div>
+
+<!-- 支持的数据格式 -->
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>📋 支持的格式</h3>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;font-size:0.85rem">
+    <div style="padding:0.5rem;background:var(--bg-hover);border-radius:var(--radius-sm)">
+      <strong>📝 选择题 (MMLU)</strong><br>
+      <code style="font-size:0.75rem">{"id","question","choices":{"A":"..."},"answer":"A"}</code>
+    </div>
+    <div style="padding:0.5rem;background:var(--bg-hover);border-radius:var(--radius-sm)">
+      <strong>🔢 数学题 (GSM8K)</strong><br>
+      <code style="font-size:0.75rem">{"id","question","answer":"6800"}</code>
+    </div>
+    <div style="padding:0.5rem;background:var(--bg-hover);border-radius:var(--radius-sm)">
+      <strong>💻 编程题 (HumanEval)</strong><br>
+      <code style="font-size:0.75rem">{"id","prompt","test":"assert ...","description":"..."}</code>
+    </div>
+    <div style="padding:0.5rem;background:var(--bg-hover);border-radius:var(--radius-sm)">
+      <strong>💬 开放题 (OpenEval)</strong><br>
+      <code style="font-size:0.75rem">{"id","question","reference_answer":"..."}</code>
+    </div>
+  </div>
+</div>
+
+<!-- 已存在的数据集列表 -->
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>已存在的数据集</h3>
+    <span class="tag">{{ files|length }} 个文件</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>文件名</th>
+          <th>类型</th>
+          <th>版本</th>
+          <th>题量</th>
+          <th>大小</th>
+          <th>泄露风险</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in files %}
+        <tr>
+          <td><code style="font-size:0.8rem">{{ f.name }}</code></td>
+          <td><span style="font-size:0.85rem">{{ f.category[:20] }}</span></td>
+          <td>
+            {% if f.version == '自定义' %}
+            <span class="tag" style="background:var(--accent);color:#fff;font-size:0.7rem">自定义</span>
+            {% elif f.version == '扩展版' %}
+            <span class="tag status-completed" style="font-size:0.7rem">扩展版</span>
+            {% else %}
+            <span class="tag" style="font-size:0.7rem">基础版</span>
+            {% endif %}
+          </td>
+          <td>{{ f.questions }}</td>
+          <td style="color:var(--text-muted);font-size:0.85rem">{{ f.size }}</td>
+          <td>
+            {% set risk_info = contamination.get(f.name) %}
+            {% if risk_info %}
+            <span class="tag" style="background:{% if risk_info.risk == '安全' %}var(--green){% elif risk_info.risk == '低' %}var(--blue){% elif risk_info.risk == '中' %}var(--orange){% else %}var(--red){% endif %};color:#fff;font-size:0.7rem">
+              {{ risk_info.risk }}
+            </span>
+            {% else %}
+            <span style="font-size:0.7rem;color:var(--text-muted)">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <button onclick="previewDataset('{{ f.name }}')" class="btn-sm" style="font-size:0.8rem">预览</button>
+            {% if '_custom' in f.name %}
+            <form method="post" action="{{ url_for('datasets_delete', filename=f.name) }}" style="display:inline" onsubmit="return confirm('确认删除 {{ f.name }}？')">
+              <button type="submit" class="btn-sm" style="font-size:0.8rem;color:var(--red);background:none;border:none;cursor:pointer">删除</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 预览对话框 -->
+<div id="previewModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center"
+     onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--bg-card);border-radius:var(--radius);max-width:700px;width:90%;max-height:80vh;overflow-y:auto;padding:1.5rem">
+    <div class="flex-between" style="margin-bottom:1rem">
+      <h3 style="margin:0">📄 数据集预览</h3>
+      <button onclick="document.getElementById('previewModal').style.display='none'" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-muted)">✕</button>
+    </div>
+    <div id="previewContent" style="font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let selectedFile = null;
+
+function handleDrop(e) {
+  e.preventDefault();
+  if (e.dataTransfer.files.length > 0) {
+    handleFile(e.dataTransfer.files[0]);
+  }
+}
+
+function handleFile(file) {
+  if (!file.name.endsWith('.json')) {
+    alert('仅支持 JSON 文件');
+    return;
+  }
+  selectedFile = file;
+  document.getElementById('fileName').textContent = '📄 ' + file.name;
+  document.getElementById('uploadForm').style.display = 'block';
+  document.getElementById('uploadZone').style.borderColor = 'var(--accent)';
+  document.getElementById('uploadStatus').textContent = '';
+}
+
+function cancelUpload() {
+  selectedFile = null;
+  document.getElementById('uploadForm').style.display = 'none';
+  document.getElementById('uploadZone').style.borderColor = 'var(--border)';
+  document.getElementById('fileInput').value = '';
+}
+
+function uploadDataset() {
+  if (!selectedFile) return;
+  
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  const name = document.getElementById('datasetName').value.trim();
+  if (name) formData.append('name', name);
+  
+  document.getElementById('uploadStatus').textContent = '⏳ 上传中...';
+  
+  fetch('/datasets/upload', {
+    method: 'POST',
+    body: formData,
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      document.getElementById('uploadStatus').innerHTML = '✅ 上传成功！' + data.questions + ' 题 (' + data.category + ')';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      document.getElementById('uploadStatus').innerHTML = '❌ ' + (data.error || '上传失败');
+    }
+  })
+  .catch(err => {
+    document.getElementById('uploadStatus').innerHTML = '❌ 网络错误';
+  });
+}
+
+function previewDataset(filename) {
+  fetch('/datasets/preview/' + filename)
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('previewContent');
+      if (data.error) {
+        el.textContent = '❌ ' + data.error;
+      } else {
+        let html = '共 <strong>' + data.total + '</strong> 条\n\n';
+        if (data.sample) {
+          html += data.sample.map((item, i) => 
+            '--- 第 ' + (i+1) + ' 条 ---\n' + JSON.stringify(item, null, 2)
+          ).join('\n\n');
+          if (data.total > 5) html += '\n\n... 还有 ' + (data.total - 5) + ' 条';
+        }
+        el.textContent = html;
+      }
+      document.getElementById('previewModal').style.display = 'flex';
+    });
+}
+</script>
+{% endblock %}

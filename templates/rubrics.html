@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Rubric 评分模板{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>📋 Rubric 结构化评分模板</h2>
+    <p>可配置的多维度打分体系，增强 LLM-as-Judge 的评估质量</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>什么是 Rubric 结构化评分？</h3>
+  </div>
+  <div style="font-size:0.9rem;line-height:1.6;color:var(--text-secondary)">
+    <p>传统的 LLM-as-Judge 使用单一 1-5 分进行整体评价，缺乏可解释性和一致性。<strong>Rubric 结构化评分</strong> 将评估拆分为多个独立维度（如准确性、完整性、清晰度），每个维度有明确的打分标准和权重。</p>
+    <p><strong>优势：</strong></p>
+    <ul>
+      <li>✅ <strong>可解释性</strong> — 不仅知道分数，还知道哪些维度扣分</li>
+      <li>✅ <strong>一致性</strong> — 结构化标准减少 Judge 模型的随机性</li>
+      <li>✅ <strong>针对性</strong> — 不同任务类型使用不同的评分维度</li>
+      <li>✅ <strong>可行动</strong> — 低分维度直接指向改进方向</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>可用模板</h3>
+    <span class="tag">{{ templates|length }} 个模板</span>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:1rem">
+    {% for rid, tpl in templates.items() %}
+    <div style="padding:1rem;background:var(--bg-hover);border-radius:8px;border-left:3px solid var(--accent)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+        <div>
+          <span style="font-weight:600;font-size:1rem">{{ tpl.name }}</span>
+          <span style="font-size:0.75rem;color:var(--text-muted);margin-left:0.5rem">{{ rid }}</span>
+        </div>
+        <span class="tag">{{ tpl.dimensions|length }} 个维度</span>
+      </div>
+      <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.5rem">{{ tpl.description }}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
+        {% for dim in tpl.dimensions %}
+        <span class="tag" style="background:rgba(0,212,224,0.1);color:var(--accent);border:1px solid rgba(0,212,224,0.2)">{{ dim }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>📐 Rubric 评测流程</h3>
+  </div>
+  <div style="display:flex;gap:1rem;flex-wrap:wrap;padding:0.5rem 0">
+    <div style="flex:1;min-width:150px;text-align:center;padding:1rem;background:var(--bg-hover);border-radius:8px">
+      <div style="font-size:2rem;margin-bottom:0.3rem">📝</div>
+      <div style="font-size:0.85rem;font-weight:600">1. 模型作答</div>
+      <div style="font-size:0.75rem;color:var(--text-muted)">处理开放题任务</div>
+    </div>
+    <div style="flex:1;min-width:150px;text-align:center;padding:1rem;background:var(--bg-hover);border-radius:8px">
+      <div style="font-size:2rem;margin-bottom:0.3rem">📋</div>
+      <div style="font-size:0.85rem;font-weight:600">2. Rubric 构建</div>
+      <div style="font-size:0.75rem;color:var(--text-muted)">按模板生成多维度评分提示词</div>
+    </div>
+    <div style="flex:1;min-width:150px;text-align:center;padding:1rem;background:var(--bg-hover);border-radius:8px">
+      <div style="font-size:2rem;margin-bottom:0.3rem">⚖️</div>
+      <div style="font-size:0.85rem;font-weight:600">3. Judge 评分</div>
+      <div style="font-size:0.75rem;color:var(--text-muted)">逐维度评1-5分</div>
+    </div>
+    <div style="flex:1;min-width:150px;text-align:center;padding:1rem;background:var(--bg-hover);border-radius:8px">
+      <div style="font-size:2rem;margin-bottom:0.3rem">📊</div>
+      <div style="font-size:0.85rem;font-weight:600">4. 加权汇总</div>
+      <div style="font-size:0.75rem;color:var(--text-muted)">计算加权总分 + 维度雷达图</div>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>🚀 如何使用</h3>
+  </div>
+  <div style="font-size:0.9rem;line-height:1.6;color:var(--text-secondary)">
+    <ol>
+      <li>进入 <a href="{{ url_for('benchmarks_page') }}" style="color:var(--accent)">Benchmark 页面</a></li>
+      <li>选择 <strong>Rubric 结构化评分</strong> Benchmark</li>
+      <li>选择一个 <strong>Judge 模型</strong>（Rubric 评分需要 Judge 模型）</li>
+      <li>启动评测并查看结果</li>
+    </ol>
+  </div>
+</div>
+
+{% endblock %}

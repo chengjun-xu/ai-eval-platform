@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}对比 · AI 评测平台{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>模型对比</h2>
+    <p>选择两个模型进行全方位的评测得分对比</p>
+  </div>
+</div>
+
+<div class="compare-grid">
+  <!-- 模型 A -->
+  <div class="card">
+    <div class="card-header"><h3>模型 A</h3></div>
+    <select id="modelA" style="width:100%;padding:0.6rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.95rem;outline:none;appearance:none">
+        {% for m in models %}
+        <option value="{{ m.id }}" {% if loop.first %}selected{% endif %}>{{ m.name }} ({{ m.scores.values()|list|length }} 项评测)</option>
+        {% endfor %}
+    </select>
+    <div id="modelA-info" style="margin-top:1rem">
+      {% set m = models[0] %}
+      {% set vals = m.scores.values()|list %}
+      {% set avg = (vals|sum / vals|length)|round(1) if vals|length > 0 else '—' %}
+      <div class="compare-model-card" style="border-color:{{ m.color }};border-top:3px solid {{ m.color }}">
+        <h3 style="color:{{ m.color }}">{{ m.name }}</h3>
+        <div class="provider">{{ m.provider }} · {{ m.version }}</div>
+        <div class="big-score" style="color:{{ m.color }}">{{ avg }}</div>
+        <div style="color:var(--text-muted);font-size:0.85rem">平均分</div>
+        <div style="margin-top:0.75rem;display:flex;justify-content:center;gap:1rem;font-size:0.85rem">
+          <span>💲 {{ m.cost_per_1k }}/1K</span>
+          <span>⚡ {{ m.latency_ms }}</span>
+          <span>📐 {{ (m.context_window // 1000) if m.context_window and m.context_window is number else '—' }}K</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模型 B -->
+  <div class="card">
+    <div class="card-header"><h3>模型 B</h3></div>
+    <select id="modelB" style="width:100%;padding:0.6rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.95rem;outline:none;appearance:none">
+        {% for m in models %}
+        <option value="{{ m.id }}" {% if loop.index == 2 %}selected{% endif %}>{{ m.name }} ({{ m.scores.values()|list|length }} 项评测)</option>
+        {% endfor %}
+    </select>
+    <div id="modelB-info" style="margin-top:1rem">
+      {% set m = models[1] if models|length > 1 else models[0] %}
+      {% set vals = m.scores.values()|list %}
+      {% set avg = (vals|sum / vals|length)|round(1) if vals|length > 0 else '—' %}
+      <div class="compare-model-card" style="border-color:{{ m.color }};border-top:3px solid {{ m.color }}">
+        <h3 style="color:{{ m.color }}">{{ m.name }}</h3>
+        <div class="provider">{{ m.provider }} · {{ m.version }}</div>
+        <div class="big-score" style="color:{{ m.color }}">{{ avg }}</div>
+        <div style="color:var(--text-muted);font-size:0.85rem">平均分</div>
+        <div style="margin-top:0.75rem;display:flex;justify-content:center;gap:1rem;font-size:0.85rem">
+          <span>💲 {{ m.cost_per_1k }}/1K</span>
+          <span>⚡ {{ m.latency_ms }}</span>
+          <span>📐 {{ (m.context_window // 1000) if m.context_window and m.context_window is number else '—' }}K</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 雷达对比图 -->
+<div class="card">
+  <div class="card-header">
+    <h3>五维能力雷达对比</h3>
+    <span class="tag">Compare</span>
+  </div>
+  <div class="chart-container" style="min-height:340px">
+    <canvas id="compareRadar"></canvas>
+  </div>
+</div>
+
+<!-- 统计显著性 -->{% if significance %}
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>📊 统计显著性检验</h3>
+    <span class="tag" style="background:{% if significance.significant %}var(--green){% else %}var(--orange){% endif %};color:#fff">
+      {% if significance.significant %}✅ 有显著差异{% else %}⚠️ 无显著差异{% endif %}
+    </span>
+  </div>
+  <div style="display:flex;gap:2rem;flex-wrap:wrap;padding:0.5rem 0">
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.3rem">模型对比</div>
+      <div style="display:flex;justify-content:space-around;text-align:center">
+        <div>
+          <div style="font-weight:600;font-size:1.1rem">{{ significance.model_a }}</div>
+          <div style="font-size:1.5rem;font-weight:800;color:var(--accent)">{{ significance.score_a }}</div>
+        </div>
+        <div style="display:flex;align-items:center;font-size:1.2rem;color:var(--text-muted)">VS</div>
+        <div>
+          <div style="font-weight:600;font-size:1.1rem">{{ significance.model_b }}</div>
+          <div style="font-size:1.5rem;font-weight:800;color:var(--accent)">{{ significance.score_b }}</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.3rem">95% 置信区间重叠判断</div>
+      <div style="font-size:0.95rem;line-height:1.6;padding:0.5rem;background:var(--bg-hover);border-radius:var(--radius-sm)">
+        {% if significance.significant %}
+        <span style="color:var(--green)">✅ 两个模型的 95% 置信区间不重叠</span> — 说明分差有统计显著性，<strong>{{ significance.model_a }}</strong> 显著优于 <strong>{{ significance.model_b }}</strong>。
+        {% else %}
+        <span style="color:var(--orange)">⚠️ 两个模型的 95% 置信区间存在重叠</span> — 说明当前分差可能是随机波动，需要更多评测数据或更敏感的测试集。
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- 逐项对比表 -->
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>逐项得分对比</h3>
+    <span class="tag">Detail</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Benchmark</th>
+          <th>类别</th>
+          <th id="headerA">{{ models[0].name }}</th>
+          <th id="headerB">{{ models[1].name if models|length > 1 else models[0].name }}</th>
+          <th>差值</th>
+        </tr>
+      </thead>
+      <tbody id="compareTable">
+        {% set a = models[0] %}
+        {% set b = models[1] if models|length > 1 else models[0] %}
+        {% for bm in benchmarks %}
+        {% set sa = a.scores.get(bm.id, '—') %}
+        {% set sb = b.scores.get(bm.id, '—') %}
+        {% set san = sa is number and sa %}
+        {% set sbn = sb is number and sb %}
+        <tr>
+          <td><strong>{{ bm.name }}</strong></td>
+          <td style="color:var(--text-muted)">{{ bm.category }}</td>
+          <td class="score-cell {% if san and sa >= 90 %}high{% elif san and sa >= 80 %}mid{% else %}low{% endif %}">{{ sa }}</td>
+          <td class="score-cell {% if sbn and sb >= 90 %}high{% elif sbn and sb >= 80 %}mid{% else %}low{% endif %}">{{ sb }}</td>
+          <td style="color:{% if sa is number and sb is number and sa > sb %}var(--green){% elif sa is number and sb is number and sb > sa %}var(--orange){% else %}var(--text-muted){% endif %};font-weight:600">
+            {% if sa is number and sb is number and sa > sb %}+{{ sa - sb }}{% elif sa is number and sb is number and sb > sa %}-{{ sb - sa }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const MODELS = {{ models_json|safe }};
+  const BENCHMARKS = {{ benchmarks_json|safe }};
+
+  let compareChart = null;
+
+  function updateCompare() {
+    const idA = document.getElementById('modelA').value;
+    const idB = document.getElementById('modelB').value;
+    const mA = MODELS.find(m => m.id === idA);
+    const mB = MODELS.find(m => m.id === idB);
+
+    // 更新信息卡片
+    function updateInfo(el, m) {
+      const vals = Object.values(m.scores);
+      const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+      el.innerHTML = `
+        <div class="compare-model-card" style="border-color:${m.color};border-top:3px solid ${m.color}">
+          <h3 style="color:${m.color}">${m.name}</h3>
+          <div class="provider">${m.provider} · ${m.version}</div>
+          <div class="big-score" style="color:${m.color}">${avg}</div>
+          <div style="color:var(--text-muted);font-size:0.85rem">平均分</div>
+          <div style="margin-top:0.75rem;display:flex;justify-content:center;gap:1rem;font-size:0.85rem">
+            <span>💲 $${m.cost_per_1k}/1K</span>
+            <span>⚡ ${m.latency_ms}ms</span>
+            <span>📐 ${(m.context_window / 1000).toFixed(0)}K</span>
+          </div>
+        </div>`;
+    }
+    updateInfo(document.getElementById('modelA-info'), mA);
+    updateInfo(document.getElementById('modelB-info'), mB);
+
+    // 更新表头
+    document.getElementById('headerA').textContent = mA.name;
+    document.getElementById('headerB').textContent = mB.name;
+
+    // 更新表格数据
+    const tbody = document.getElementById('compareTable');
+    tbody.innerHTML = BENCHMARKS.map(bm => {
+      const sa = mA.scores[bm.id];
+      const sb = mB.scores[bm.id];
+      const diff = sa - sb;
+      const color = diff > 0 ? 'var(--green)' : diff < 0 ? 'var(--orange)' : 'var(--text-muted)';
+      const sign = diff > 0 ? '+' : diff < 0 ? '' : '';
+      return `<tr>
+        <td><strong>${bm.name}</strong></td>
+        <td style="color:var(--text-muted)">${bm.category}</td>
+        <td class="score-cell ${sa >= 90 ? 'high' : sa >= 80 ? 'mid' : 'low'}">${sa}</td>
+        <td class="score-cell ${sb >= 90 ? 'high' : sb >= 80 ? 'mid' : 'low'}">${sb}</td>
+        <td style="color:${color};font-weight:600">${sign}${diff}</td>
+      </tr>`;
+    }).join('');
+
+    // 更新雷达图
+    if (compareChart) compareChart.destroy();
+    compareChart = renderCompareChart('compareRadar', mA, mB, BENCHMARKS);
+  }
+
+  document.getElementById('modelA').addEventListener('change', updateCompare);
+  document.getElementById('modelB').addEventListener('change', updateCompare);
+
+  // 初始渲染
+  const mA = MODELS.find(m => m.id === document.getElementById('modelA').value);
+  const mB = MODELS.find(m => m.id === document.getElementById('modelB').value);
+  compareChart = renderCompareChart('compareRadar', mA, mB, BENCHMARKS);
+</script>
+{% endblock %}

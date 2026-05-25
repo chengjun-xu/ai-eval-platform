@@ -1,0 +1,74 @@
+[
+  {
+    "id": "mmlu_01", "category": "法律",
+    "question": "在刑法中，正当防卫超过必要限度造成重大损害的，应当负刑事责任，但是应当（  ）处罚。",
+    "choices": {"A": "从轻", "B": "减轻或者免除", "C": "从轻或者减轻", "D": "从重"},
+    "answer": "B", "subject": "jurisprudence"
+  },
+  {
+    "id": "mmlu_02", "category": "物理",
+    "question": "光在真空中的传播速度约为（  ）。",
+    "choices": {"A": "3×10⁶ m/s", "B": "3×10⁷ m/s", "C": "3×10⁸ m/s", "D": "3×10⁹ m/s"},
+    "answer": "C", "subject": "physics"
+  },
+  {
+    "id": "mmlu_03", "category": "化学",
+    "question": "以下哪种元素的化学符号是 'Fe'？",
+    "choices": {"A": "铁", "B": "氟", "C": "钫", "D": "铍"},
+    "answer": "A", "subject": "chemistry"
+  },
+  {
+    "id": "mmlu_04", "category": "生物",
+    "question": "人体内氧气运输主要依靠（  ）。",
+    "choices": {"A": "白细胞", "B": "血小板", "C": "红细胞", "D": "血浆"},
+    "answer": "C", "subject": "biology"
+  },
+  {
+    "id": "mmlu_05", "category": "计算机",
+    "question": "下列哪种数据结构遵循 '后进先出' (LIFO) 原则？",
+    "choices": {"A": "队列", "B": "栈", "C": "链表", "D": "哈希表"},
+    "answer": "B", "subject": "computer_science"
+  },
+  {
+    "id": "mmlu_06", "category": "数学",
+    "question": "sin²(θ) + cos²(θ) = （  ）。",
+    "choices": {"A": "0", "B": "1", "C": "sin(2θ)", "D": "cos(2θ)"},
+    "answer": "B", "subject": "math"
+  },
+  {
+    "id": "mmlu_07", "category": "历史",
+    "question": "第一次世界大战爆发的导火索是什么事件？",
+    "choices": {"A": "萨拉热窝事件", "B": "珍珠港事件", "C": "莱克星顿枪声", "D": "攻占巴士底狱"},
+    "answer": "A", "subject": "history"
+  },
+  {
+    "id": "mmlu_08", "category": "地理",
+    "question": "世界上面积最大的国家是（  ）。",
+    "choices": {"A": "中国", "B": "美国", "C": "俄罗斯", "D": "加拿大"},
+    "answer": "C", "subject": "geography"
+  },
+  {
+    "id": "mmlu_09", "category": "经济",
+    "question": "通货膨胀最直接的衡量指标是（  ）。",
+    "choices": {"A": "GDP", "B": "CPI", "C": "PPI", "D": "PMI"},
+    "answer": "B", "subject": "economics"
+  },
+  {
+    "id": "mmlu_10", "category": "逻辑",
+    "question": "如果所有 A 都是 B，且所有 B 都是 C，那么以下哪个结论必然成立？",
+    "choices": {"A": "所有 C 都是 A", "B": "所有 A 都是 C", "C": "有些 C 不是 A", "D": "没有 A 是 C"},
+    "answer": "B", "subject": "logic"
+  },
+  {
+    "id": "mmlu_11", "category": "医学",
+    "question": "人体最大的器官是（  ）。",
+    "choices": {"A": "肝脏", "B": "心脏", "C": "皮肤", "D": "肺"},
+    "answer": "C", "subject": "anatomy"
+  },
+  {
+    "id": "mmlu_12", "category": "天文",
+    "question": "太阳系中距离太阳最近的行星是（  ）。",
+    "choices": {"A": "金星", "B": "水星", "C": "地球", "D": "火星"},
+    "answer": "B", "subject": "astronomy"
+  }
+]

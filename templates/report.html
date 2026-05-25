@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}评测报告{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>📊 评测报告</h2>
+    <p>{{ model_name }} · {{ report_date }}</p>
+  </div>
+  <div>
+    <button onclick="window.print()" class="btn-primary" style="width:auto;padding:0.5rem 1.2rem">🖨️ 打印 / 导出PDF</button>
+  </div>
+</div>
+
+<!-- 总体得分卡片 -->
+<div class="card" style="border-color:var(--accent);text-align:center;padding:1.5rem">
+  <div style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">
+    综合得分
+    {% if quick_mode %}<span class="tag" style="background:var(--orange);color:#fff;font-size:0.65rem;margin-left:0.5rem">快速回归</span>{% endif %}
+  </div>
+  <div style="font-size:3.5rem;font-weight:800;color:var(--accent);margin:0.5rem 0">{{ overall_score }}%</div>
+  <div style="font-size:0.9rem;color:var(--text-secondary)">{{ overall_correct }} / {{ overall_total }} 正确</div>
+  {% if overall_ci %}
+  <div style="font-size:0.85rem;color:var(--text-muted);margin-top:0.3rem">
+    95% 置信区间: {{ (overall_ci.lower * 100)|round(1) }}% ~ {{ (overall_ci.upper * 100)|round(1) }}%
+  </div>
+  {% endif %}
+  <div style="display:flex;gap:2rem;justify-content:center;margin-top:1rem;flex-wrap:wrap">
+    <div><span style="color:var(--green);font-weight:700">{{ runs_count }}</span> 次评测</div>
+    <div><span style="color:var(--orange);font-weight:700">{{ benchmarks_count }}</span> 个 Benchmark</div>
+    <div><span style="color:var(--text-muted)">耗时 {{ total_elapsed }}s</span></div>
+  </div>
+</div>
+
+<div class="row mt-1" style="grid-template-columns: 1fr 1fr">
+  <!-- 雷达图 -->
+  <div class="card">
+    <div class="card-header"><h3>能力雷达图</h3></div>
+    <div style="position:relative;height:280px">
+      <canvas id="radarChart"></canvas>
+    </div>
+  </div>
+
+  <!-- 各 Benchmark 得分 -->
+  <div class="card">
+    <div class="card-header"><h3>Benchmark 得分</h3></div>
+    <div style="display:flex;flex-direction:column;gap:0.75rem">
+      {% for b in benchmarks_summary %}
+      <div>
+        <div class="flex-between" style="font-size:0.85rem;margin-bottom:0.3rem">
+          <span>
+            {{ icons.get(b.name, '📊') }} <strong>{{ b.name }}</strong>
+            {% if b.version %}<span style="font-size:0.7rem;color:var(--text-muted)">({{ b.version }})</span>{% endif %}
+          </span>
+          <span style="font-weight:700;color:{% if b.score >= 70 %}var(--green){% elif b.score >= 40 %}var(--orange){% else %}var(--red){% endif %}">
+            {{ b.score }}%
+          </span>
+        </div>
+        <div style="height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:{{ b.score }}%;background:{% if b.score >= 70 %}var(--green){% elif b.score >= 40 %}var(--orange){% else %}var(--red){% endif %};border-radius:3px;transition:width 1s ease"></div>
+        </div>
+        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.2rem">
+          {{ b.correct }}/{{ b.total }} 正确
+          {%- if b.ci %} · 95% CI: {{ (b.ci.lower * 100)|round(1) }}%-{{ (b.ci.upper * 100)|round(1) }}%{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- 数据泄露风险评估 -->
+{% if contamination_reports %}
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>🚩 数据泄露风险评估</h3>
+    <span style="font-size:0.75rem;color:var(--text-muted)">n-gram 重叠分析</span>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:0.5rem">
+    {% for name, cr in contamination_reports.items() %}
+    <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem;background:var(--bg-hover);border-radius:6px">
+      <div style="min-width:90px;font-weight:600;font-size:0.85rem">{{ icons.get(name, '📊') }} {{ name }}</div>
+      <div>
+        <span class="tag" style="background:{% if cr.overall_risk == '安全' %}var(--green){% elif cr.overall_risk == '低' %}var(--blue){% elif cr.overall_risk == '中' %}var(--orange){% else %}var(--red){% endif %};color:#fff;font-size:0.7rem">
+          {{ cr.overall_risk }}
+        </span>
+      </div>
+      <div style="font-size:0.8rem;color:var(--text-muted)">
+        污染指数 {{ cr.overall_contamination_score }} {% if cr.high_risk_count > 0 %}· 高风险 {{ cr.high_risk_count }}/{{ cr.data_size }} 题{% endif %}
+      </div>
+      <div style="margin-left:auto;font-size:0.75rem;color:var(--text-muted);max-width:300px;text-align:right">
+        {{ cr.short_suggestion }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Bad Case 分析 -->
+{% if bad_cases %}
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>🔍 Bad Case 分析</h3>
+    <span class="tag status-failed">{{ bad_cases|length }} 个错误</span>
+  </div>
+  <!-- 错误分类统计 -->
+  {% if error_categories %}
+  <div style="margin-bottom:1rem;display:flex;gap:1.5rem;flex-wrap:wrap;padding:0.75rem 0">
+    {% for cat, count in error_categories.items() %}
+    <div style="text-align:center;min-width:80px">
+      <div style="font-size:1.3rem;font-weight:700;color:var(--red)">{{ count }}</div>
+      <div style="font-size:0.75rem;color:var(--text-muted)">{{ cat }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- 归因分析 -->
+  {% if attribution and attribution.total > 0 %}
+  <div style="margin:0.75rem 0;padding:0.75rem;background:var(--bg-hover);border-radius:8px">
+    <div style="font-size:0.9rem;font-weight:600;margin-bottom:0.5rem">🔬 Bad Case 归因分类</div>
+    <div class="flex-between" style="flex-wrap:wrap;gap:0.3rem">
+      {% for problem in attribution.top_problems %}
+      <span style="font-size:0.8rem;color:var(--text-secondary)">{{ problem }}</span>
+      {% endfor %}
+    </div>
+    {% if attribution.actionable_insights %}
+    <details style="margin-top:0.5rem">
+      <summary style="font-size:0.8rem;color:var(--accent);cursor:pointer">💡 改进建议（点击展开）</summary>
+      <div style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.3rem">
+        {% for insight in attribution.actionable_insights %}
+        <div style="font-size:0.8rem;color:var(--text-muted);padding:0.25rem 0.5rem;border-left:3px solid var(--accent);background:rgba(0,212,224,0.05)">{{ loop.index }}. {{ insight }}</div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    <div style="margin-top:0.4rem;font-size:0.75rem;color:var(--text-muted)">
+      严重度: <strong>{{ attribution.severity_summary }}</strong> · 共 {{ attribution.total }} 个错误
+    </div>
+  </div>
+  {% endif %}
+  
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Benchmark</th>
+          <th>题目</th>
+          <th>预期</th>
+          <th>预测</th>
+          <th>错误类型</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for bc in bad_cases %}
+        <tr>
+          <td><span class="tag" style="font-size:0.7rem">{{ bc.benchmark }}</span></td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.85rem">
+            {{ bc.question[:60] }}{{ '…' if bc.question|length > 60 }}
+          </td>
+          <td><code style="font-size:0.75rem">{{ bc.expected[:30] }}</code></td>
+          <td><code style="font-size:0.75rem;color:var(--red)">{{ bc.predicted[:30] }}</code></td>
+          <td style="font-size:0.8rem;color:var(--text-muted)">
+            {% if bc.judge_score is defined and bc.judge_score %}
+              Judge {{ bc.judge_score }}/5
+            {% elif bc.error %}
+              {{ bc.error[:20] }}
+            {% else %}
+              答案不匹配
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- 最近评测记录 -->
+{% if run_history %}
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>📋 评测历史</h3>
+    <a href="{{ url_for('history_page') }}" style="font-size:0.85rem">全部 →</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>时间</th>
+          <th>Benchmarks</th>
+          <th>得分</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in run_history %}
+        <tr>
+          <td>{{ loop.revindex }}</td>
+          <td style="font-size:0.85rem;color:var(--text-muted)">{{ r.completed_at[:16] if r.completed_at else '—' }}</td>
+          <td>
+            {% for bid, bres in r.benchmarks.items() %}
+            <span style="font-size:0.8rem;margin-right:0.5rem">{{ bid|upper }}: <strong>{{ bres.score }}</strong></span>
+            {% endfor %}
+          </td>
+          <td style="font-weight:700;color:var(--accent)">{{ r.overall_score }}</td>
+          <td><a href="{{ url_for('eval_status', run_id=r.run_id) }}" style="font-size:0.85rem">详情</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var labels = {{ chart_labels | tojson }};
+  var scores = {{ chart_scores | tojson }};
+  
+  var ctx = document.getElementById('radarChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: '{{ model_name }}',
+        data: scores,
+        backgroundColor: 'rgba(0, 212, 224, 0.15)',
+        borderColor: '#00D4E0',
+        borderWidth: 2,
+        pointBackgroundColor: '#00D4E0',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1,
+        pointRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        r: {
+          beginAtZero: true,
+          max: 100,
+          ticks: {
+            stepSize: 20,
+            font: { size: 10 },
+            backdropColor: 'transparent'
+          },
+          grid: { color: 'rgba(255,255,255,0.06)' },
+          angleLines: { color: 'rgba(255,255,255,0.06)' },
+          pointLabels: {
+            font: { size: 11, weight: 'bold' },
+            color: '#94a3b8'
+          }
+        }
+      }
+    }
+  });
+});
+</script>
+{% endblock %}

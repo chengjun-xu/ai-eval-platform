@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}运行评测{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>运行评测</h2>
+    <p>选择模型和 Benchmark，启动评测任务</p>
+  </div>
+</div>
+
+{% if models | length == 0 %}
+<div class="card" style="text-align:center;padding:3rem">
+  <div style="font-size:3rem;margin-bottom:1rem">🤖</div>
+  <h3 style="margin-bottom:0.5rem">还没有注册模型</h3>
+  <p style="color:var(--text-secondary);margin-bottom:1.5rem">先去模型管理页面添加你的模型，再回来运行评测</p>
+  <a href="{{ url_for('models_page') }}" class="btn-primary" style="display:inline-block;width:auto;padding:0.6rem 2rem;text-decoration:none">前往添加模型</a>
+</div>
+{% else %}
+
+<!-- 评测配置表单 -->
+<div class="card">
+  <div class="card-header">
+    <h3>评测配置</h3>
+    <span class="tag">Eval</span>
+  </div>
+  <form method="post" action="{{ url_for('eval_run') }}" id="evalForm">
+    <div style="margin-bottom:1.25rem">
+      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">选择模型 *</label>
+      <select name="model_id" required style="width:100%;max-width:400px;padding:0.65rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.95rem;outline:none;appearance:none">
+        <option value="">— 请选择模型 —</option>
+        {% for m in models %}
+        <option value="{{ m.id }}">{{ m.name }} ({{ m.provider }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="margin-bottom:1.25rem">
+      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">Judge 模型 <span style="color:var(--text-muted);font-weight:400">（开放题评分用，可选）</span></label>
+      <select name="judge_model_id" style="width:100%;max-width:400px;padding:0.65rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.95rem;outline:none;appearance:none">
+        <option value="">— 不使用 Judge（仅查看模型回答） —</option>
+        {% for jm in judge_models %}
+        <option value="{{ jm.id }}">{{ jm.name }} ({{ jm.provider }})</option>
+        {% endfor %}
+      </select>
+      <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.3rem">💡 选择 OpenEval 时，系统自动用 Judge 模型对开放题回答进行 1-5 分评分</div>
+    </div>
+
+    <!-- 评测模式 -->
+    <div style="margin-bottom:1.25rem">
+      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">评测模式</label>
+      <div style="display:flex;gap:1.5rem;align-items:center">
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm)">
+          <input type="radio" name="quick_mode" value="" checked style="accent-color:var(--accent)">
+          <div>
+            <div style="font-weight:600;font-size:0.9rem">🔄 完整评测</div>
+            <div style="font-size:0.75rem;color:var(--text-muted)">使用全部题目，结果最准确</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm)">
+          <input type="radio" name="quick_mode" value="on" style="accent-color:var(--orange)">
+          <div>
+            <div style="font-weight:600;font-size:0.9rem">⚡ 快速回归</div>
+            <div style="font-size:0.75rem;color:var(--text-muted)">每类抽样 20 题，快速验证</div>
+          </div>
+        </label>
+      </div>
+      <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.3rem">💡 日常迭代用快速回归，版本发布前用完整评测</div>
+    </div>
+
+    <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">选择 Benchmark *（可多选）</label>
+    <div class="benchmark-select-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.75rem;margin-bottom:1.25rem">
+      {% for b in benchmarks %}
+      <label class="benchmark-select-card" style="display:flex;align-items:flex-start;gap:0.75rem;padding:1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;transition:all 0.2s">
+        <input type="checkbox" name="benchmarks" value="{{ b.id }}" style="margin-top:0.15rem;accent-color:var(--accent);width:16px;height:16px">
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:0.95rem">{{ b.name }}
+            {%- if b.version == '扩展版' %} <span class="tag" style="font-size:0.65rem;padding:0.1rem 0.4rem;background:var(--accent);color:#fff">扩展版</span>
+            {%- else %} <span class="tag" style="font-size:0.65rem;padding:0.1rem 0.4rem;background:var(--bg-hover);color:var(--text-muted)">基础版</span>
+            {%- endif %}
+          </div>
+          <div style="font-size:0.8rem;color:var(--accent);margin-bottom:0.2rem">{{ b.category }} · {{ b.question_count }} 题</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);line-height:1.4">{{ b.description[:80] }}{{ '...' if b.description|length > 80 }}</div>
+        </div>
+      </label>
+      {% endfor %}
+    </div>
+
+    <button type="submit" class="btn-primary" style="width:auto;padding:0.7rem 2.5rem;font-size:1rem" onclick="this.disabled=true;this.textContent='正在启动...';this.form.submit()">
+      🚀 启动评测
+    </button>
+  </form>
+</div>
+{% endif %}
+
+<!-- 最近评测记录 -->
+{% if runs %}
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>最近评测记录</h3>
+    <a href="{{ url_for('history_page') }}" style="font-size:0.85rem">全部 →</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>模型</th>
+          <th>Benchmarks</th>
+          <th>综合得分</th>
+          <th>完成时间</th>
+          <th>详情</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td><strong>{{ r.model_name }}</strong></td>
+          <td>
+            {% for bid, bres in r.benchmarks.items() %}
+            <span style="color:var(--text-secondary);margin-right:0.6rem">{{ bid|upper }}: <strong>{{ bres.score }}</strong></span>
+            {% endfor %}
+          </td>
+          <td style="font-weight:700;color:var(--accent);font-size:1.05rem">{{ r.overall_score }}</td>
+          <td style="color:var(--text-muted);font-size:0.85rem">{{ r.completed_at[:16] if r.completed_at else '—' }}</td>
+          <td><a href="{{ url_for('eval_status', run_id=r.run_id) }}" style="font-size:0.85rem">查看 →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 选中卡片高亮（修复双击翻转的 Bug）
+document.querySelectorAll('.benchmark-select-card').forEach(card => {
+  card.addEventListener('click', function(e) {
+    e.preventDefault();
+    const cb = this.querySelector('input[type="checkbox"]');
+    cb.checked = !cb.checked;
+    this.style.borderColor = cb.checked ? 'var(--accent)' : 'var(--border)';
+    this.style.boxShadow = cb.checked ? '0 0 0 1px var(--accent)' : 'none';
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}评测 Agent{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>🤖 评测 Agent</h2>
+    <p>用自然语言告诉我想评测什么，我来帮你自动完成</p>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+
+  <!-- 左侧：对话区 -->
+  <div class="card" style="display:flex;flex-direction:column;height:500px">
+    <div class="card-header">
+      <h3>对话</h3>
+      <span class="tag status-completed">Agent</span>
+    </div>
+
+    <!-- 消息列表 -->
+    <div id="chatMessages" style="flex:1;overflow-y:auto;padding:0.75rem 0;display:flex;flex-direction:column;gap:0.75rem;font-size:0.9rem">
+      <div class="agent-msg" style="background:var(--bg-secondary);padding:0.75rem 1rem;border-radius:var(--radius);max-width:90%;align-self:flex-start;line-height:1.6">
+        👋 你好！我是评测 Agent。
+        <br><br>
+        你可以对我说：
+        <div style="margin-top:0.4rem;font-size:0.85rem;color:var(--text-muted)">
+          • "评测 DeepSeek V4 Flash"<br>
+          • "帮我跑 MMLU 和 GSM8K"<br>
+          • "全部跑一遍，用 Judge 评分"<br>
+          • "只测代码能力"
+        </div>
+      </div>
+    </div>
+
+    <!-- 输入区 -->
+    <div style="display:flex;gap:0.5rem;border-top:1px solid var(--border);padding-top:0.75rem">
+      <input type="text" id="agentInput" placeholder="输入评测指令..." 
+             style="flex:1;padding:0.6rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem;outline:none"
+             onkeydown="if(event.key==='Enter') sendMessage()">
+      <button onclick="sendMessage()" class="btn-primary" style="width:auto;padding:0.6rem 1.2rem;white-space:nowrap">发送</button>
+    </div>
+  </div>
+
+  <!-- 右侧：计划 & 状态 -->
+  <div class="card" style="display:flex;flex-direction:column;height:500px">
+    <div class="card-header">
+      <h3>执行计划</h3>
+      <span id="planStatus" class="tag">等待输入</span>
+    </div>
+    <div id="planArea" style="flex:1;overflow-y:auto;padding:0.75rem 0;font-size:0.9rem;line-height:1.7;color:var(--text-secondary)">
+      <div style="text-align:center;padding:2rem;color:var(--text-muted)">
+        输入评测指令后，这里会显示执行计划
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:0.75rem;display:flex;gap:0.5rem">
+      <button id="confirmBtn" disabled class="btn-primary" style="width:auto;flex:1;padding:0.6rem" onclick="confirmRun()">🚀 确认执行</button>
+      <button id="reportBtn" disabled class="btn-primary" style="width:auto;flex:1;padding:0.6rem;background:var(--accent-hover)" onclick="viewReport()">📊 查看报告</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- 示例指令 -->
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>💡 试试这样说</h3>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
+    <button class="tag" style="cursor:pointer;font-size:0.85rem;padding:0.4rem 0.8rem" onclick="tryExample(this)">评测 DeepSeek V4 Flash，跑全部</button>
+    <button class="tag" style="cursor:pointer;font-size:0.85rem;padding:0.4rem 0.8rem" onclick="tryExample(this)">帮我跑 MMLU 和 GSM8K</button>
+    <button class="tag" style="cursor:pointer;font-size:0.85rem;padding:0.4rem 0.8rem" onclick="tryExample(this)">测代码能力，用 Judge 评分</button>
+    <button class="tag" style="cursor:pointer;font-size:0.85rem;padding:0.4rem 0.8rem" onclick="tryExample(this)">只跑开放题评测</button>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentIntent = null;
+let currentRunId = null;
+
+function addMessage(text, isUser) {
+  const msgs = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.style.cssText = isUser
+    ? 'background:var(--accent);color:#fff;padding:0.75rem 1rem;border-radius:var(--radius);max-width:80%;align-self:flex-end;line-height:1.5'
+    : 'background:var(--bg-secondary);padding:0.75rem 1rem;border-radius:var(--radius);max-width:90%;align-self:flex-start;line-height:1.6';
+  div.innerHTML = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function sendMessage() {
+  const input = document.getElementById('agentInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  addMessage(text, true);
+  input.value = '';
+  
+  document.getElementById('planArea').innerHTML = '<div style="text-align:center;padding:1rem;color:var(--text-muted)">⏳ 解析中...</div>';
+  document.getElementById('planStatus').textContent = '解析中';
+  document.getElementById('planStatus').className = 'tag status-running';
+
+  fetch('/agents/parse', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: text}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      currentIntent = data.intent;
+      document.getElementById('planArea').innerHTML = data.plan.replace(/\n/g, '<br>');
+      document.getElementById('planStatus').textContent = '等待确认';
+      document.getElementById('planStatus').className = 'tag status-completed';
+      document.getElementById('confirmBtn').disabled = false;
+      document.getElementById('reportBtn').disabled = true;
+      addMessage('✅ 已理解指令，看看右边的执行计划是否正确？', false);
+    } else {
+      document.getElementById('planArea').innerHTML = '❌ ' + (data.error || '解析失败');
+      document.getElementById('planStatus').textContent = '解析失败';
+      document.getElementById('planStatus').className = 'tag status-failed';
+      addMessage('❌ 我没能理解："' + (data.error || '无法解析你的指令') + '"，换个说法试试？', false);
+    }
+  })
+  .catch(err => {
+    document.getElementById('planArea').innerHTML = '❌ 网络错误';
+    document.getElementById('planStatus').textContent = '错误';
+    addMessage('❌ 网络连接异常，请重试', false);
+  });
+}
+
+function confirmRun() {
+  if (!currentIntent) return;
+
+  document.getElementById('confirmBtn').disabled = true;
+  document.getElementById('confirmBtn').textContent = '⏳ 运行中...';
+  document.getElementById('planStatus').textContent = '运行中';
+  document.getElementById('planStatus').className = 'tag status-running';
+  addMessage('🚀 开始执行评测，请稍候...', false);
+
+  fetch('/agents/run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({intent: currentIntent}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      currentRunId = data.run_id;
+      document.getElementById('planArea').innerHTML = 
+        '✅ 评测已启动！<br><br>' +
+        '运行 ID: <code>' + data.run_id + '</code><br><br>' +
+        '点击下方按钮查看实时进度';
+      document.getElementById('planStatus').textContent = '运行中';
+      document.getElementById('confirmBtn').textContent = '🚀 确认执行';
+      document.getElementById('reportBtn').disabled = false;
+      addMessage('✅ 评测已启动！<a href="' + data.status_url + '" class="btn-sm" style="color:var(--accent)">点击查看进度</a>', false);
+    } else {
+      document.getElementById('planArea').innerHTML = '❌ 启动失败：' + (data.error || '未知错误');
+      document.getElementById('confirmBtn').disabled = false;
+      document.getElementById('confirmBtn').textContent = '🚀 重新执行';
+      document.getElementById('planStatus').textContent = '失败';
+      addMessage('❌ 评测启动失败：' + (data.error || '未知错误'), false);
+    }
+  })
+  .catch(err => {
+    document.getElementById('confirmBtn').disabled = false;
+    document.getElementById('confirmBtn').textContent = '🚀 确认执行';
+    document.getElementById('planStatus').textContent = '错误';
+    addMessage('❌ 网络错误，请重试', false);
+  });
+}
+
+function viewReport() {
+  if (currentIntent && currentIntent.model_name) {
+    window.location.href = '/report/' + encodeURIComponent(currentIntent.model_name);
+  }
+}
+
+function tryExample(btn) {
+  document.getElementById('agentInput').value = btn.textContent;
+  sendMessage();
+}
+</script>
+{% endblock %}

@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}评测状态{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>评测详情</h2>
+    <p>评测 ID: {{ run_id }}</p>
+  </div>
+</div>
+
+{% if status is none %}
+<div class="card" style="text-align:center;padding:3rem">
+  <div style="font-size:3rem;margin-bottom:1rem">❓</div>
+  <h3>评测不存在</h3>
+  <p style="color:var(--text-muted);margin-top:0.5rem">该评测任务可能已过期或 ID 不正确</p>
+  <a href="{{ url_for('history_page') }}" class="btn-primary" style="display:inline-block;width:auto;margin-top:1rem;padding:0.6rem 2rem;text-decoration:none">查看历史记录</a>
+</div>
+
+{% elif status.status == 'pending' or status.status == 'running' %}
+<!-- 运行中 -->
+<div class="card" style="text-align:center;padding:2.5rem">
+  <div style="font-size:3rem;margin-bottom:1rem" id="statusIcon">⏳</div>
+  <h3 id="statusTitle">评测运行中...</h3>
+  <p style="color:var(--text-secondary);margin-top:0.5rem" id="statusMessage">{{ status.message }}</p>
+  
+  <!-- 进度条 -->
+  <div style="max-width:400px;margin:1.5rem auto">
+    <div style="display:flex;justify-content:space-between;font-size:0.85rem;color:var(--text-muted);margin-bottom:0.4rem">
+      <span id="progressText">{{ status.progress }}%</span>
+      <span>完成</span>
+    </div>
+    <div style="height:8px;background:var(--bg-hover);border-radius:4px;overflow:hidden">
+      <div id="progressBar" style="height:100%;width:{{ status.progress }}%;background:linear-gradient(90deg,var(--accent),var(--accent-hover));border-radius:4px;transition:width 0.5s ease"></div>
+    </div>
+  </div>
+  
+  <p style="font-size:0.8rem;color:var(--text-muted);margin-top:1rem">页面每 3 秒自动刷新</p>
+</div>
+
+{% elif status.status == 'failed' %}
+<!-- 失败 -->
+<div class="card" style="text-align:center;padding:2.5rem;border-color:var(--red)">
+  <div style="font-size:3rem;margin-bottom:1rem">❌</div>
+  <h3 style="color:var(--red)">评测失败</h3>
+  <p style="color:var(--text-muted);margin-top:0.5rem">{{ status.message }}</p>
+  {% if status.error %}
+  <details style="margin-top:1rem;text-align:left">
+    <summary style="cursor:pointer;color:var(--text-secondary);font-size:0.85rem">查看错误详情</summary>
+    <pre style="margin-top:0.5rem;padding:0.75rem;background:var(--bg-secondary);border-radius:var(--radius-sm);font-size:0.8rem;color:var(--red);overflow:auto;max-height:300px">{{ status.error }}</pre>
+  </details>
+  {% endif %}
+  <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-block;width:auto;margin-top:1rem;padding:0.6rem 2rem;text-decoration:none">重新评测</a>
+</div>
+
+{% elif status.status == 'completed' %}
+<!-- 完成 -->
+<div class="card" style="border-color:var(--green)">
+  <div class="flex-between">
+    <div>
+      <div style="font-size:3rem;margin-bottom:0.5rem">✅</div>
+      <h3>评测完成
+        {% if status.quick_mode %}<span class="tag" style="background:var(--orange);color:#fff;font-size:0.65rem">快速模式</span>{% endif %}
+      </h3>
+      <p style="color:var(--text-muted);font-size:0.85rem">
+        模型: <strong>{{ status.model_name }}</strong> · 
+        完成时间: {{ status.completed_at }} · 
+        耗时: {{ status.elapsed }}秒
+      </p>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:2.5rem;font-weight:700;color:var(--accent)">{{ status.overall_score }}</div>
+      <div style="color:var(--text-muted);font-size:0.85rem">综合得分 ({{ status.overall_correct }}/{{ status.overall_total }})</div>
+      {% if status.confidence_interval %}
+      <div style="color:var(--text-muted);font-size:0.75rem;margin-top:0.3rem">
+        95% CI: {{ (status.confidence_interval.lower * 100)|round(1) }}% ~ {{ (status.confidence_interval.upper * 100)|round(1) }}%
+      </div>
+      {% endif %}
+  </div>
+</div>
+
+<div class="row mt-1" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
+  {% for bid, bres in status.benchmarks.items() %}
+  <div class="card">
+    <div class="card-header">
+      <h3>{{ bid|upper }}</h3>
+      <span class="tag {% if bres.score >= 70 %}status-completed{% elif bres.score >= 40 %}status-running{% else %}status-failed{% endif %}" style="font-size:0.85rem">{{ bres.score }}%</span>
+    </div>
+    <div style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:0.75rem">
+      {{ bres.correct }} / {{ bres.total }} 正确
+    </div>
+    <div style="margin-bottom:0.75rem">
+      <div style="height:8px;background:var(--bg-hover);border-radius:4px;overflow:hidden">
+        <div style="height:100%;width:{{ bres.score }}%;background:var(--green);border-radius:4px"></div>
+      </div>
+    </div>
+    
+    <!-- 逐题详情 -->
+    <details>
+      <summary style="cursor:pointer;font-size:0.85rem;color:var(--accent);margin-bottom:0.5rem">查看逐题详情</summary>
+      <div style="font-size:0.8rem;max-height:300px;overflow-y:auto">
+        {% for d in bres.details %}
+        <div style="padding:0.5rem;margin-bottom:0.35rem;background:var(--bg-secondary);border-radius:var(--radius-sm);border-left:3px solid {{ 'var(--green)' if d.correct else 'var(--red)' }}">
+          <div style="display:flex;justify-content:space-between;margin-bottom:0.2rem">
+            <span style="font-weight:500">{{ d.id }}</span>
+            <span style="color:{{ 'var(--green)' if d.correct else 'var(--red)' }}">{{ '✓' if d.correct else '✗' }}</span>
+          </div>
+            <div style="color:var(--text-muted);word-break:break-all">
+              {%- if d.judge_score is defined and d.judge_score is not none %}
+              <div style="margin-bottom:0.15rem">
+                <span>Judge 评分:</span>
+                <span style="font-size:0.9rem;font-weight:700;color:{% if d.judge_score >= 4 %}var(--green){% elif d.judge_score >= 3 %}var(--orange){% else %}var(--red){% endif %}">
+                  {{ d.judge_score }}/5
+                </span>
+                {% if d.judge_reason %} · <span style="font-size:0.75rem;color:var(--text-muted)">{{ d.judge_reason }}</span>{% endif %}
+              </div>
+              {% endif -%}
+              {%- if d.question is defined %}
+              <div style="margin-bottom:0.15rem;font-size:0.78rem">{{ d.question[:80] }}{% if d.question|length > 80 %}...{% endif %}</div>
+              {% endif -%}
+              <span>预期:</span> <code style="font-size:0.75rem;background:var(--bg-hover);padding:0.1rem 0.3rem;border-radius:3px">{{ d.expected }}</code>
+              &middot;
+              <span>预测:</span> <code style="font-size:0.75rem;background:var(--bg-hover);padding:0.1rem 0.3rem;border-radius:3px">{{ d.predicted }}</code>
+              {%- if d.error is defined and not d.correct %}
+              <div style="color:var(--red);font-size:0.75rem;margin-top:0.15rem">⚠ {{ d.error }}</div>
+              {% endif -%}
+            </div>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+  </div>
+  {% endfor %}
+</div>
+
+<div style="margin-top:1rem;display:flex;gap:0.75rem">
+  <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-block;width:auto;padding:0.6rem 1.5rem;text-decoration:none">🔄 运行新评测</a>
+  <a href="{{ url_for('history_page') }}" style="display:inline-block;padding:0.6rem 1.5rem;color:var(--text-secondary);text-decoration:none;font-size:0.9rem">📋 查看历史</a>
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% if status and (status.status == 'pending' or status.status == 'running') %}
+<script>
+// 轮询进度
+const RUN_ID = '{{ run_id }}';
+function poll() {
+  fetch('/api/eval/status/' + RUN_ID)
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'running' || data.status === 'pending') {
+        document.getElementById('progressBar').style.width = data.progress + '%';
+        document.getElementById('progressText').textContent = data.progress + '%';
+        document.getElementById('statusMessage').textContent = data.message || '运行中...';
+        setTimeout(poll, 3000);
+      } else {
+        location.reload();
+      }
+    })
+    .catch(() => setTimeout(poll, 3000));
+}
+setTimeout(poll, 1500);
+</script>
+{% endif %}
+{% endblock %}

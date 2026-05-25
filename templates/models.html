@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}模型管理{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>模型管理</h2>
+    <p>注册你要评测的模型，支持 OpenAI 兼容 API</p>
+  </div>
+</div>
+
+<div class="row">
+  <!-- 添加模型表单 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>添加模型</h3>
+      <span class="tag">New</span>
+    </div>
+    <form method="post" action="{{ url_for('models_add') }}">
+      <div class="form-group">
+        <label>模型名称 *</label>
+        <input type="text" name="name" placeholder="例如: My LLM v1" required>
+      </div>
+      <div class="form-group">
+        <label>模型 ID *</label>
+        <input type="text" name="id" placeholder="例如: my-llm-v1（唯一标识，字母数字短横）" required>
+      </div>
+      <div class="form-group">
+        <label>提供商</label>
+        <input type="text" name="provider" placeholder="例如: OpenAI / DeepSeek / 自研">
+      </div>
+      <div class="form-group">
+        <label>API Base URL</label>
+        <input type="text" name="api_base" placeholder="例如: https://api.deepseek.com/v1" value="https://api.deepseek.com/v1">
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <input type="password" name="api_key" placeholder="sk-..." value="{{ 'sk-...' if models | length > 0 else '' }}">
+      </div>
+      <div class="form-group">
+        <label>模型名称（发送给 API 的 model 参数）</label>
+        <input type="text" name="model_name" placeholder="例如: deepseek-chat" value="deepseek-chat">
+      </div>
+      <div class="form-group">
+        <label>描述（可选）</label>
+        <textarea name="description" style="width:100%;padding:0.6rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem;outline:none;resize:vertical;min-height:60px;font-family:inherit" placeholder="模型的简要说明"></textarea>
+      </div>
+      <button type="submit" class="btn-primary">添加模型</button>
+    </form>
+  </div>
+
+  <!-- 已注册模型列表 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>已注册模型 ({{ models | length }})</h3>
+      <span class="tag">List</span>
+    </div>
+    {% if models %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>模型</th><th>Provider</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          {% for m in models %}
+          <tr>
+            <td>
+              <div class="model-cell">
+                <span class="model-dot" style="background:var(--accent)"></span>
+                <div>
+                  <div class="model-name">{{ m.name }}</div>
+                  <div class="model-provider">{{ m.id }}</div>
+                </div>
+              </div>
+            </td>
+            <td style="color:var(--text-muted)">{{ m.provider }}</td>
+            <td>
+              <form method="post" action="{{ url_for('models_delete', model_id=m.id) }}" onsubmit="return confirm('确定删除模型「{{ m.name }}」？')" style="display:inline">
+                <button type="submit" style="background:none;border:none;color:var(--red);font-size:0.85rem;cursor:pointer">删除</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:2rem 0;color:var(--text-muted)">
+      <div style="font-size:2rem;margin-bottom:0.5rem">🤖</div>
+      <p>还没有注册模型</p>
+      <p style="font-size:0.85rem">填写左侧表单添加你的第一个模型</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>快速入门：如何注册模型</h3>
+  </div>
+  <div style="color:var(--text-secondary);font-size:0.9rem;line-height:1.8">
+    <p><strong>1. API 模型（推荐）</strong> — 如果你的模型已部署并暴露 OpenAI 兼容 API：</p>
+    <ul style="margin:0.5rem 0 0.5rem 1.5rem">
+      <li>填写 API Base URL（如 <code>https://api.deepseek.com/v1</code>）</li>
+      <li>填写 API Key</li>
+      <li>填写模型名称（如 <code>deepseek-chat</code>）</li>
+    </ul>
+    <p><strong>2. 本地模型</strong> — 如果你的模型在本地运行（如通过 Ollama/vLLM 部署）：</p>
+    <ul style="margin:0.5rem 0 0 1.5rem">
+      <li>API Base URL 填本地地址（如 <code>http://localhost:11434/v1</code>）</li>
+      <li>API Key 可填任意占位符</li>
+    </ul>
+  </div>
+</div>
+
+{% endblock %}

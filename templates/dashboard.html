@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}总览{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>评测总览</h2>
+    <p>实时评测数据仪表盘</p>
+  </div>
+</div>
+
+<!-- 统计卡片 -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-label">已注册模型</div>
+    <div class="stat-value">{{ total_models }}</div>
+    <div class="stat-sub">可在评测中选择</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Benchmark 数量</div>
+    <div class="stat-value">{{ total_benchmarks }}</div>
+    <div class="stat-sub">知识 · 数学 · 代码</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">已完成评测</div>
+    <div class="stat-value">{{ total_runs }}</div>
+    <div class="stat-sub">评测轮次</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">全局平均分</div>
+    <div class="stat-value" style="color: var(--accent)">{{ avg_score }}</div>
+    <div class="stat-sub">所有评测综合</div>
+  </div>
+</div>
+
+{% if total_models == 0 %}
+<!-- 首次使用引导 -->
+<div class="card" style="text-align:center;padding:3rem 2rem;border:1px dashed var(--border-light)">
+  <div style="font-size:3rem;margin-bottom:1rem">🚀</div>
+  <h3 style="margin-bottom:0.5rem">开始使用评测平台</h3>
+  <p style="color:var(--text-secondary);margin-bottom:1.5rem">还没有注册任何模型。先去添加你的第一个模型，然后运行评测吧！</p>
+  <a href="{{ url_for('models_page') }}" class="btn-primary" style="display:inline-block;width:auto;padding:0.6rem 2rem;text-decoration:none">添加模型</a>
+</div>
+{% else %}
+<div class="row">
+  <!-- 已注册模型 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>已注册模型</h3>
+      <a href="{{ url_for('models_page') }}" style="font-size:0.85rem">管理 →</a>
+    </div>
+    {% if models %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>模型</th><th>Provider</th><th>API</th><th>添加时间</th></tr></thead>
+        <tbody>
+          {% for m in models %}
+          <tr>
+            <td><div class="model-cell"><span class="model-dot" style="background:var(--accent)"></span><span class="model-name">{{ m.name }}</span></div></td>
+            <td style="color:var(--text-muted)">{{ m.provider }}</td>
+            <td><code style="font-size:0.8rem;color:var(--text-muted)">{{ m.api_base[:40] if m.api_base else '—' }}</code></td>
+            <td style="color:var(--text-secondary);font-size:0.85rem">{{ m.created_at if m.created_at else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted);padding:1rem 0">暂无已注册模型</p>
+    {% endif %}
+  </div>
+
+  <!-- 最近评测 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>最近评测</h3>
+      <a href="{{ url_for('history_page') }}" style="font-size:0.85rem">全部 →</a>
+    </div>
+    {% if recent_runs %}
+    <div style="display:flex;flex-direction:column;gap:0.75rem">
+      {% for r in recent_runs %}
+      <div class="flex-between" style="padding:0.4rem 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:500;font-size:0.9rem">{{ r.model_name }}</div>
+          <div style="font-size:0.8rem;color:var(--text-muted)">
+            {% for bid, bres in r.benchmarks.items() %}
+              <span style="margin-right:0.5rem">{{ bres.score }}%</span>
+            {% endfor %}
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:1.2rem;font-weight:700;color:var(--accent)">{{ r.overall_score }}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted)">{{ r.completed_at[:10] if r.completed_at else '' }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted);padding:1rem 0">还没有评测记录</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- 最佳模型 -->
+{% if best_model_name %}
+<div class="card">
+  <div class="card-header">
+    <h3>🏆 当前最佳模型</h3>
+    <span class="tag">{{ best_score }} 分</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:1rem;padding:0.5rem 0">
+    <span style="width:12px;height:12px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+    <strong style="font-size:1.1rem">{{ best_model_name }}</strong>
+    <span style="color:var(--text-muted)">{{ best_score }} 综合得分</span>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+{% endblock %}

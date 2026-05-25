@@ -1,0 +1,12 @@
+[
+  {
+    "id": "deepseek-v4-flash",
+    "name": "DeepSeek V4 Flash",
+    "provider": "DeepSeek",
+    "api_base": "https://api.deepseek.com/v1",
+    "api_key": "sk-4e1bd7c388e94caf971424f4378c075e",
+    "model_name": "deepseek-v4-flash",
+    "description": "DeepSeek V4 Flash 快速版",
+    "created_at": "2026-05-23 14:51"
+  }
+]

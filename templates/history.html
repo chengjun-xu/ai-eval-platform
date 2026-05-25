@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}历史记录{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>📋 评测历史</h2>
+    <p>全部评测记录 · 共 <strong>{{ stats.total_runs }}</strong> 次</p>
+  </div>
+  <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-flex;align-items:center;gap:0.4rem;width:auto;padding:0.5rem 1.2rem;text-decoration:none;font-size:0.9rem">
+    <span style="font-size:1rem">🚀</span> 新评测
+  </a>
+</div>
+
+{% if runs %}
+
+<!-- 统计概要 -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.75rem;margin-bottom:1.25rem">
+  <div class="card" style="text-align:center;padding:0.75rem 0.5rem">
+    <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">总次数</div>
+    <div style="font-size:1.6rem;font-weight:800;color:var(--accent)">{{ stats.total_runs }}</div>
+  </div>
+  <div class="card" style="text-align:center;padding:0.75rem 0.5rem">
+    <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">平均分</div>
+    <div style="font-size:1.6rem;font-weight:800;color:{% if stats.avg_score >= 70 %}var(--green){% elif stats.avg_score >= 40 %}var(--orange){% else %}var(--red){% endif %}">{{ stats.avg_score }}</div>
+  </div>
+  <div class="card" style="text-align:center;padding:0.75rem 0.5rem">
+    <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">最高分模型</div>
+    <div style="font-size:1rem;font-weight:700;color:var(--orange)">{{ stats.best_model }}</div>
+    <div style="font-size:0.8rem;color:var(--accent);font-weight:600">{{ stats.best_score }}</div>
+  </div>
+  <div class="card" style="text-align:center;padding:0.75rem 0.5rem">
+    <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">测试题总数</div>
+    <div style="font-size:1.6rem;font-weight:800;color:var(--text-secondary)">{{ stats.total_questions }}</div>
+  </div>
+</div>
+
+<!-- 按模型分组展示 -->
+{% for mn, group in model_groups.items() %}
+<div style="margin-bottom:1.5rem">
+  <div style="display:flex;align-items:center;gap:0.5rem;padding:0.6rem 0;margin-bottom:0.4rem;border-bottom:1px solid var(--border)">
+    <span style="font-size:1.2rem">🤖</span>
+    <span style="font-weight:700;font-size:1.05rem">{{ mn }}</span>
+    <span class="tag" style="font-size:0.65rem">{{ group|length }} 次</span>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:0.6rem">
+    {% for r in group %}
+    <div class="card" style="padding:1rem;cursor:pointer;transition:all 0.15s" onclick="location.href='{{ url_for('eval_status', run_id=r.run_id) }}'">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+
+        <!-- 左侧：时间 + 辅助信息 -->
+        <div style="flex-shrink:0;min-width:150px">
+          <div style="font-size:0.8rem;color:var(--text-muted)">
+            🕐 {{ r.completed_at[:16] if r.completed_at else '—' }}
+            {% if r.quick_mode %}<span class="tag" style="background:var(--orange);color:#fff;font-size:0.6rem;vertical-align:middle;margin-left:0.3rem">快速</span>{% endif %}
+          </div>
+          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.15rem">
+            ⏱ {{ r.elapsed }}s · {{ r.overall_correct }}/{{ r.overall_total }}
+          </div>
+        </div>
+
+        <!-- 中间：Benchmark 芯片 -->
+        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;flex:1;align-items:center">
+          {% for bid, bres in r.benchmarks.items() %}
+          {% set bname = bench_names.get(bid, bid) %}
+          {% set bicon = bench_icons.get(bid, '📊') %}
+          <div style="display:inline-flex;align-items:center;gap:0.25rem;padding:0.25rem 0.55rem;background:var(--bg-hover);border-radius:var(--radius-sm);border:1px solid var(--border)">
+            <span style="font-size:0.8rem">{{ bicon }}</span>
+            <span style="font-size:0.72rem;font-weight:500;color:var(--text-secondary)">{{ bname }}</span>
+            <span style="font-size:0.82rem;font-weight:700;color:{% if bres.score >= 70 %}var(--green){% elif bres.score >= 40 %}var(--orange){% else %}var(--red){% endif %}">{{ bres.score }}</span>
+          </div>
+          {% endfor %}
+        </div>
+
+        <!-- 右侧：总分 + 操作 -->
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
+          <div style="text-align:right">
+            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase">综合</div>
+            <div style="font-size:1.4rem;font-weight:800;color:var(--accent)">{{ r.overall_score }}</div>
+            {% if r.confidence_interval %}
+            <div style="font-size:0.6rem;color:var(--text-muted)" title="95% 置信区间">{{ (r.confidence_interval.lower * 100)|round(1) }}%~{{ (r.confidence_interval.upper * 100)|round(1) }}%</div>
+            {% endif %}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:0.25rem">
+            <a href="{{ url_for('eval_status', run_id=r.run_id) }}" class="btn-primary" style="font-size:0.72rem;padding:0.2rem 0.55rem;width:auto;text-decoration:none;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">详情</a>
+            <a href="{{ url_for('report', model_name=r.model_name) }}" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:var(--bg-hover);color:var(--text-secondary);border-radius:var(--radius-sm);text-decoration:none;text-align:center;white-space:nowrap;border:1px solid var(--border)" onclick="event.stopPropagation()">报告</a>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+
+{% else %}
+<div class="card" style="text-align:center;padding:3rem">
+  <div style="font-size:3rem;margin-bottom:1rem">📋</div>
+  <h3 style="margin-bottom:0.5rem">还没有评测记录</h3>
+  <p style="color:var(--text-secondary)">去「运行评测」页面启动你的第一次评测吧！</p>
+  <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-block;width:auto;margin-top:1rem;padding:0.6rem 2rem;text-decoration:none">🚀 启动评测</a>
+</div>
+{% endif %}
+
+{% endblock %}

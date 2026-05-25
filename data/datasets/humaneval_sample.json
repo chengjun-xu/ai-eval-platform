@@ -1,0 +1,30 @@
+[
+  {
+    "id": "humaneval_01",
+    "prompt": "def two_sum(nums, target):\\n    \"\"\"返回数组中两个数和为 target 的下标。\"\"\"\\n    ",
+    "description": "两数之和",
+    "test": "assert two_sum([2,7,11,15], 9) == [0,1]\\nassert two_sum([3,2,4], 6) == [1,2]",
+    "category": "数组/哈希"
+  },
+  {
+    "id": "humaneval_02",
+    "prompt": "def is_palindrome(s):\\n    \"\"\"判断字符串是否为回文（忽略大小写和非字母数字字符）。\"\"\"\\n    ",
+    "description": "回文判断",
+    "test": "assert is_palindrome('A man, a plan, a canal: Panama') == True\\nassert is_palindrome('race a car') == False",
+    "category": "字符串"
+  },
+  {
+    "id": "humaneval_03",
+    "prompt": "def fibonacci(n):\\n    \"\"\"返回斐波那契数列的第 n 项（n 从 0 开始）。\"\"\"\\n    ",
+    "description": "斐波那契数列",
+    "test": "assert fibonacci(0) == 0\\nassert fibonacci(1) == 1\\nassert fibonacci(10) == 55",
+    "category": "递归/DP"
+  },
+  {
+    "id": "humaneval_04",
+    "prompt": "def find_max(nums):\\n    \"\"\"返回列表中的最大值。\"\"\"\\n    ",
+    "description": "找最大值",
+    "test": "assert find_max([3, 7, 2, 9, 5]) == 9\\nassert find_max([-1, -5, -3]) == -1",
+    "category": "基础"
+  }
+]

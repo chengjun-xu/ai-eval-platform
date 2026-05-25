@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Judge 模型{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>Judge 模型管理</h2>
+    <p>注册用于 LLM-as-Judge 评分的大模型，用于开放题自动评分</p>
+  </div>
+</div>
+
+<!-- Judge 模型列表 -->
+{% if judge_models %}
+<div class="card">
+  <div class="card-header">
+    <h3>已注册的 Judge 模型</h3>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>提供商</th>
+          <th>模型名</th>
+          <th>描述</th>
+          <th>创建时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for jm in judge_models %}
+        <tr>
+          <td><strong>{{ jm.name }}</strong></td>
+          <td>{{ jm.provider }}</td>
+          <td><code>{{ jm.model_name }}</code></td>
+          <td style="color:var(--text-muted);font-size:0.85rem">{{ jm.description[:50] }}{{ '…' if jm.description|length > 50 }}</td>
+          <td style="color:var(--text-muted);font-size:0.85rem">{{ jm.created_at }}</td>
+          <td>
+            <form method="post" action="{{ url_for('judge_models_delete', model_id=jm.id) }}" style="display:inline" onsubmit="return confirm('确认删除 Judge 模型「{{ jm.name }}」？')">
+              <button type="submit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.85rem;padding:0">删除</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- 注册新 Judge 模型 -->
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>注册新 Judge 模型</h3>
+    <span class="tag">Judge</span>
+  </div>
+  <form method="post" action="{{ url_for('judge_models_add') }}" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+    <div>
+      <label class="form-label">ID *</label>
+      <input type="text" name="id" required placeholder="如: gpt4-judge" class="form-input">
+    </div>
+    <div>
+      <label class="form-label">名称 *</label>
+      <input type="text" name="name" required placeholder="如: GPT-4o Judge" class="form-input">
+    </div>
+    <div>
+      <label class="form-label">提供商</label>
+      <input type="text" name="provider" placeholder="如: OpenAI, DeepSeek" class="form-input">
+    </div>
+    <div>
+      <label class="form-label">API 地址</label>
+      <input type="text" name="api_base" placeholder="如: https://api.deepseek.com/v1" class="form-input">
+    </div>
+    <div>
+      <label class="form-label">API Key</label>
+      <input type="password" name="api_key" placeholder="sk-..." class="form-input">
+    </div>
+    <div>
+      <label class="form-label">模型名 *</label>
+      <input type="text" name="model_name" required placeholder="如: deepseek-v4-flash, gpt-4o" class="form-input">
+    </div>
+    <div style="grid-column:1/-1">
+      <label class="form-label">描述</label>
+      <input type="text" name="description" placeholder="如: 用于开放题评分的 Judge 模型" class="form-input">
+    </div>
+    <div style="grid-column:1/-1">
+      <button type="submit" class="btn-primary" style="width:auto;padding:0.6rem 2rem">➕ 注册 Judge 模型</button>
+    </div>
+  </form>
+</div>
+
+<!-- 使用说明 -->
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>💡 如何使用 LLM-as-Judge</h3>
+  </div>
+  <div style="font-size:0.9rem;line-height:1.7;color:var(--text-secondary)">
+    <ol style="margin:0;padding-left:1.2rem">
+      <li>先在本页注册一个 <strong>Judge 模型</strong>（用于评分的 LLM）</li>
+      <li>去「<a href="{{ url_for('models_page') }}" style="color:var(--accent)">模型管理</a>」注册<strong>待评测模型</strong></li>
+      <li>去「<a href="{{ url_for('benchmarks_page') }}" style="color:var(--accent)">运行评测</a>」选择 <strong>OpenEval</strong> 并指定 Judge 模型</li>
+      <li>系统自动：待评测模型答题 → Judge 模型评分 → 输出结果</li>
+    </ol>
+    <p style="margin-top:0.75rem;padding:0.5rem 0.75rem;background:var(--bg-hover);border-radius:var(--radius-sm)">
+      💡 建议使用比待评测模型更强的模型作为 Judge（如用 DeepSeek V4 Pro 评判 V4 Flash）
+    </p>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 更新 Judge badge
+fetch('/api/eval/status/none').catch(() => {});
+// 加载后获取 judge 模型数量
+document.addEventListener('DOMContentLoaded', function() {
+  fetch('/judge-models').then(r => r.text()).then(html => {
+    var count = (html.match(/<code>/g) || []).length;
+    document.getElementById('judgeBadge').textContent = count;
+  }).catch(() => {});
+});
+</script>
+{% endblock %}
