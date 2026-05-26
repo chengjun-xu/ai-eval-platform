@@ -24,11 +24,52 @@ DATA_DIR = Path(__file__).parent / "data"
 DATASETS_DIR = DATA_DIR / "datasets"
 
 # ---------------------------------------------------------------------------
-# 运行状态存储（进程内全局，重启丢失 — 生产应换 DB）
+# 运行状态存储（持久化到 eval_runs.json，支持进程重启恢复）
 # ---------------------------------------------------------------------------
-_running_jobs: dict[str, dict] = {}           # run_id -> job info
-_completed_results: dict[str, dict] = {}      # run_id -> final result
+_running_jobs: dict[str, dict] = {}           # run_id -> job info (in-flight)
+_completed_results: dict[str, dict] = {}      # run_id -> final result (cached)
 _lock = threading.Lock()
+
+# ── 启动时恢复持久化的评测记录 ──────────────────────────────────────────────
+def _load_completed_runs() -> dict[str, dict]:
+    """从 JSON 文件加载所有已完成的评测到内存缓存"""
+    runs_file = DATA_DIR / "eval_runs.json"
+    if not runs_file.exists():
+        return {}
+    try:
+        with open(runs_file, encoding="utf-8") as f:
+            runs = json.load(f)
+        return {r["run_id"]: r for r in runs if isinstance(r, dict) and "run_id" in r}
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+# 初始化时恢复
+_completed_results.update(_load_completed_runs())
+
+
+# ── 启动时清理残留的 in-flight 记录 ──────────────────────────────────────────
+def _mark_stale_jobs() -> None:
+    """将启动前未完成的 job 标记为 stale（进程重启导致的丢失）"""
+    runs_file = DATA_DIR / "eval_runs.json"
+    if not runs_file.exists():
+        return
+    try:
+        with open(runs_file, encoding="utf-8") as f:
+            runs = json.load(f)
+        modified = False
+        for r in runs:
+            if r.get("status") in ("running", "pending"):
+                r["status"] = "stale"
+                r["message"] = "服务器重启，评测状态丢失"
+                modified = True
+        if modified:
+            with open(runs_file, "w", encoding="utf-8") as f:
+                json.dump(runs, f, ensure_ascii=False, indent=2)
+    except (json.JSONDecodeError, IOError):
+        pass
+
+# 启动时标记所有 stale 记录
+_mark_stale_jobs()
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +172,10 @@ def _load_dataset(benchmark_id: str) -> list:
 
 
 def _call_llm(model: dict, prompt: str, timeout: int = 60) -> str:
-    """调用 OpenAI 兼容 API，返回回复文本"""
+    """调用 OpenAI 兼容 API，返回回复文本
+
+    返回值格式：正常文本，或 "[API ERROR ...]" 前缀的错误消息。
+    """
     if requests is None:
         return "[ERROR: requests 库未安装]"
 
@@ -147,10 +191,59 @@ def _call_llm(model: dict, prompt: str, timeout: int = 60) -> str:
         "max_tokens": 1024,
     }
 
-    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-    if resp.status_code != 200:
-        return f"[API ERROR {resp.status_code}]: {resp.text[:200]}"
-    return resp.json()["choices"][0]["message"]["content"].strip()
+    start = time.time()
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        elapsed = round(time.time() - start, 2)
+        if resp.status_code != 200:
+            return f"[API ERROR {resp.status_code}]: {resp.text[:200]}"
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        usage = data.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+
+        # 将延迟和 Token 信息附加到返回文本（用特殊分隔符），调用方解析
+        meta = f"__LATENCY__:{elapsed}|__PROMPT_TOKENS__:{prompt_tokens}|__COMPLETION_TOKENS__:{completion_tokens}|__TOTAL_TOKENS__:{total_tokens}"
+        return f"{meta}\n{content}"
+    except requests.exceptions.Timeout:
+        elapsed = round(time.time() - start, 2)
+        return f"[API ERROR timeout]: 请求超时 ({elapsed}s)"
+    except Exception as e:
+        elapsed = round(time.time() - start, 2)
+        return f"[API ERROR {type(e).__name__}]: {str(e)[:200]}"
+
+
+def _parse_llm_response(raw: str) -> dict:
+    """解析 _call_llm 的返回值，分离 meta 信息和实际内容
+
+    Returns:
+        {"content": str, "latency": float, "prompt_tokens": int,
+         "completion_tokens": int, "total_tokens": int}
+    """
+    result = {
+        "content": raw,
+        "latency": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+    if raw.startswith("[API ERROR") or raw.startswith("[ERROR:"):
+        return result
+
+    import re
+    m = re.match(
+        r"__LATENCY__:([\d.]+)\|__PROMPT_TOKENS__:(\d+)\|__COMPLETION_TOKENS__:(\d+)\|__TOTAL_TOKENS__:(\d+)\n(.*)",
+        raw, re.DOTALL
+    )
+    if m:
+        result["latency"] = float(m.group(1))
+        result["prompt_tokens"] = int(m.group(2))
+        result["completion_tokens"] = int(m.group(3))
+        result["total_tokens"] = int(m.group(4))
+        result["content"] = m.group(5).strip()
+    return result
 
 
 def _extract_choice(text: str) -> str | None:
@@ -215,6 +308,8 @@ def _eval_mmlu(model: dict, questions: list, progress_callback) -> dict:
     correct = 0
     total = len(questions)
     details = []
+    total_latency = 0.0
+    total_tokens = 0
 
     for i, q in enumerate(questions):
         choices_text = "\n".join(f"{k}. {v}" for k, v in q["choices"].items())
@@ -222,12 +317,16 @@ def _eval_mmlu(model: dict, questions: list, progress_callback) -> dict:
             f"请回答以下选择题，只输出选项字母（A/B/C/D），不要输出其他内容。\n\n"
             f"题目: {q['question']}\n{choices_text}"
         )
-        resp = _call_llm(model, prompt)
+        raw = _call_llm(model, prompt)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
         predicted = _extract_choice(resp)
         is_correct = predicted == q["answer"]
 
         if is_correct:
             correct += 1
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         details.append({
             "id": q["id"],
@@ -237,6 +336,8 @@ def _eval_mmlu(model: dict, questions: list, progress_callback) -> dict:
             "predicted": predicted or resp[:30],
             "correct": is_correct,
             "raw_response": resp[:80],
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
@@ -245,6 +346,8 @@ def _eval_mmlu(model: dict, questions: list, progress_callback) -> dict:
         "correct": correct,
         "total": total,
         "details": details,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -253,6 +356,8 @@ def _eval_gsm8k(model: dict, questions: list, progress_callback) -> dict:
     correct = 0
     total = len(questions)
     details = []
+    total_latency = 0.0
+    total_tokens = 0
 
     for i, q in enumerate(questions):
         expected = q["answer"].strip()
@@ -264,7 +369,9 @@ def _eval_gsm8k(model: dict, questions: list, progress_callback) -> dict:
             f"请解答以下数学题目，给出最终答案（数字）并逐步推理。\n\n"
             f"题目: {q['question']}"
         )
-        resp = _call_llm(model, prompt)
+        raw = _call_llm(model, prompt)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
         predicted = _extract_number(resp)
 
         # 宽松匹配：去掉小数点后的 .0
@@ -276,6 +383,8 @@ def _eval_gsm8k(model: dict, questions: list, progress_callback) -> dict:
 
         if is_correct:
             correct += 1
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         details.append({
             "id": q["id"],
@@ -285,6 +394,8 @@ def _eval_gsm8k(model: dict, questions: list, progress_callback) -> dict:
             "predicted": predicted or resp[:30],
             "correct": is_correct,
             "raw_response": resp[:80],
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
@@ -293,6 +404,8 @@ def _eval_gsm8k(model: dict, questions: list, progress_callback) -> dict:
         "correct": correct,
         "total": total,
         "details": details,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -301,6 +414,8 @@ def _eval_humaneval(model: dict, tasks: list, progress_callback) -> dict:
     correct = 0
     total = len(tasks)
     details = []
+    total_latency = 0.0
+    total_tokens = 0
 
     for i, task in enumerate(tasks):
         prompt_lines = task["prompt"].replace("\\n", chr(10))
@@ -308,7 +423,9 @@ def _eval_humaneval(model: dict, tasks: list, progress_callback) -> dict:
             f"请完成以下 Python 函数。只输出代码，不需要解释。\n\n"
             f"{prompt_lines}"
         )
-        resp = _call_llm(model, prompt_text)
+        raw = _call_llm(model, prompt_text)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
         code = _extract_code(resp)
 
         is_correct = False
@@ -329,6 +446,8 @@ def _eval_humaneval(model: dict, tasks: list, progress_callback) -> dict:
 
         if is_correct:
             correct += 1
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         details.append({
             "id": task["id"],
@@ -337,6 +456,8 @@ def _eval_humaneval(model: dict, tasks: list, progress_callback) -> dict:
             "predicted": code[:100] if code else resp[:100],
             "correct": is_correct,
             "error": test_error,
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
@@ -345,6 +466,8 @@ def _eval_humaneval(model: dict, tasks: list, progress_callback) -> dict:
         "correct": correct,
         "total": total,
         "details": details,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -361,19 +484,28 @@ def _eval_openended(model: dict, questions: list, progress_callback,
     total = len(questions)
     details = []
     use_judge = judge_model is not None
+    total_latency = 0.0
+    total_tokens = 0
 
     for i, q in enumerate(questions):
         # 1. 待评测模型作答
         prompt = q["question"]
-        resp = _call_llm(model, prompt, timeout=120)
+        raw = _call_llm(model, prompt, timeout=120)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         # 2. Judge 评分
         judge_score = None
         judge_reason = ""
         if use_judge:
             judge_prompt = _build_judge_prompt(q, resp)
-            judge_resp = _call_llm(judge_model, judge_prompt, timeout=60)
-            judge_score, judge_reason = _parse_judge_score(judge_resp)
+            judge_raw = _call_llm(judge_model, judge_prompt, timeout=60)
+            judge_parsed = _parse_llm_response(judge_raw)
+            total_latency += judge_parsed["latency"]
+            total_tokens += judge_parsed["total_tokens"]
+            judge_score, judge_reason = _parse_judge_score(judge_parsed["content"])
 
         is_correct = (judge_score or 0) >= 4 if use_judge else True
 
@@ -386,6 +518,8 @@ def _eval_openended(model: dict, questions: list, progress_callback,
             "correct": is_correct,
             "judge_score": judge_score,
             "judge_reason": judge_reason[:100] if judge_reason else "",
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
@@ -396,6 +530,8 @@ def _eval_openended(model: dict, questions: list, progress_callback,
         "total": total,
         "avg_judge_score": avg_score,
         "details": details,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -461,13 +597,19 @@ def _eval_safety(model: dict, questions: list, progress_callback,
     details = []
     safety_score_sum = 0.0
     redline_violations = 0
+    total_latency = 0.0
+    total_tokens = 0
 
     use_judge = judge_model is not None
 
     for i, q in enumerate(questions):
         # 1. 模型回答
         prompt = q["question"]
-        resp = _call_llm(model, prompt, timeout=120)
+        raw = _call_llm(model, prompt, timeout=120)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         # 2. 安全评分
         safety_score = 3.0  # 默认
@@ -476,8 +618,11 @@ def _eval_safety(model: dict, questions: list, progress_callback,
 
         if use_judge:
             judge_prompt = _build_safety_judge_prompt(q, resp)
-            judge_resp = _call_llm(judge_model, judge_prompt, timeout=60)
-            safety_score, safety_reason, redline_broken = _parse_safety_score(judge_resp)
+            judge_raw = _call_llm(judge_model, judge_prompt, timeout=60)
+            judge_parsed = _parse_llm_response(judge_raw)
+            total_latency += judge_parsed["latency"]
+            total_tokens += judge_parsed["total_tokens"]
+            safety_score, safety_reason, redline_broken = _parse_safety_score(judge_parsed["content"])
         else:
             # 没有 Judge 时，用规则检查
             resp_lower = resp.lower()
@@ -508,6 +653,8 @@ def _eval_safety(model: dict, questions: list, progress_callback,
             "safety_score": safety_score,
             "safety_reason": safety_reason[:100] if safety_reason else "",
             "redline_broken": redline_broken,
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
@@ -525,6 +672,8 @@ def _eval_safety(model: dict, questions: list, progress_callback,
         "redline_violations": redline_violations,
         "details": details,
         "is_safety": True,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -657,20 +806,29 @@ def _eval_rubric(model: dict, questions: list, progress_callback,
     details = []
     dim_score_sum = {}
     dim_count = {}
+    total_latency = 0.0
+    total_tokens = 0
 
     use_rubric = judge_model is not None
 
     for i, q in enumerate(questions):
         # 1. 模型作答
         prompt_text = q.get("question", str(q))
-        resp = _call_llm(model, prompt_text, timeout=120)
+        raw = _call_llm(model, prompt_text, timeout=120)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         # 2. Rubric 评分
         rubric_result = {}
         if use_rubric:
             judge_prompt = _build_rubric_judge_prompt_for_eval(q, resp, rubric_id)
-            judge_resp = _call_llm(judge_model, judge_prompt, timeout=60)
-            rubric_result = _parse_rubric_judge_result(judge_resp, rubric_id)
+            judge_raw = _call_llm(judge_model, judge_prompt, timeout=60)
+            judge_parsed = _parse_llm_response(judge_raw)
+            total_latency += judge_parsed["latency"]
+            total_tokens += judge_parsed["total_tokens"]
+            rubric_result = _parse_rubric_judge_result(judge_parsed["content"], rubric_id)
 
             # 累计各维度分数
             for dim in rubric_result.get("per_dimension", []):
@@ -688,6 +846,8 @@ def _eval_rubric(model: dict, questions: list, progress_callback,
             "correct": is_correct,
             "rubric_result": rubric_result,
             "rubric_id": rubric_id,
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         }
         details.append(detail)
 
@@ -720,6 +880,8 @@ def _eval_rubric(model: dict, questions: list, progress_callback,
         "rubric_id": rubric_id,
         "details": details,
         "is_rubric": True,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -732,6 +894,8 @@ def _eval_agent(model: dict, tasks: list, progress_callback,
     details = []
     total_score = 0.0
     use_judge = judge_model is not None
+    total_latency = 0.0
+    total_tokens = 0
 
     for i, task in enumerate(tasks):
         scenario = task.get("scenario", task.get("question", ""))
@@ -751,7 +915,11 @@ def _eval_agent(model: dict, tasks: list, progress_callback,
             f"3. 每个步骤的预期输出\n\n"
             f"请用结构化格式输出。"
         )
-        resp = _call_llm(model, prompt, timeout=120)
+        raw = _call_llm(model, prompt, timeout=120)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         plan_score = 0.0
         step_cov = 0
@@ -785,7 +953,11 @@ def _eval_agent(model: dict, tasks: list, progress_callback,
 逻辑可行性: X/5
 综合得分: X.XX/1.00
 评语: <评语>"""
-            jr = _call_llm(judge_model, jp, timeout=60)
+            jr_raw = _call_llm(judge_model, jp, timeout=60)
+            jr_parsed = _parse_llm_response(jr_raw)
+            jr = jr_parsed["content"]
+            total_latency += jr_parsed["latency"]
+            total_tokens += jr_parsed["total_tokens"]
             import re
             m = re.search(r"综合得分[：:]\s*(\d+(?:\.\d+)?)\s*(?:/\s*1[.0]*)?", jr)
             plan_score = min(1.0, max(0, float(m.group(1)))) if m else 0.5
@@ -815,6 +987,8 @@ def _eval_agent(model: dict, tasks: list, progress_callback,
             "tool_hits": f"{tool_hits}/{len(expected_tools)}",
             "judge_reason": judge_reason[:100] if judge_reason else "",
             "difficulty": task.get("difficulty", ""),
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
@@ -823,6 +997,8 @@ def _eval_agent(model: dict, tasks: list, progress_callback,
         "score": avg, "correct": sum(1 for d in details if d["correct"]),
         "total": total, "avg_plan_score": round(total_score / total, 3) if total else 0,
         "details": details, "is_agent": True,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -836,6 +1012,8 @@ def _eval_rag(model: dict, questions: list, progress_callback,
     total_faith = 0.0
     total_comp = 0.0
     use_judge = judge_model is not None
+    total_latency = 0.0
+    total_tokens = 0
 
     for i, q in enumerate(questions):
         ctx = q.get("context", "")
@@ -846,7 +1024,11 @@ def _eval_rag(model: dict, questions: list, progress_callback,
             f"请基于以下上下文回答，不要添加上下文之外的信息。\n\n"
             f"## 上下文\n{ctx}\n\n## 问题\n{query}\n\n回答："
         )
-        resp = _call_llm(model, prompt, timeout=120)
+        raw = _call_llm(model, prompt, timeout=120)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
+        total_latency += parsed["latency"]
+        total_tokens += parsed["total_tokens"]
 
         faith = 0.0
         comp = 0.0
@@ -879,7 +1061,11 @@ def _eval_rag(model: dict, questions: list, progress_callback,
 完整性: X/5
 幻觉数量: X
 评语: <评语>"""
-            jr = _call_llm(judge_model, jp, timeout=60)
+            jr_raw = _call_llm(judge_model, jp, timeout=60)
+            jr_parsed = _parse_llm_response(jr_raw)
+            jr = jr_parsed["content"]
+            total_latency += jr_parsed["latency"]
+            total_tokens += jr_parsed["total_tokens"]
             import re
             m = re.search(r"忠实性[：:]\s*(\d+(?:\.\d+)?)\s*(?:/\s*5)?", jr)
             faith = min(1.0, float(m.group(1)) / 5.0) if m else 0.5
@@ -908,6 +1094,8 @@ def _eval_rag(model: dict, questions: list, progress_callback,
             "hallucination_count": hallu,
             "judge_reason": judge_reason[:100] if judge_reason else "",
             "key_fact_count": len(key_facts),
+            "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
@@ -918,6 +1106,8 @@ def _eval_rag(model: dict, questions: list, progress_callback,
         "score": score, "correct": sum(1 for d in details if d["correct"]),
         "total": total, "avg_faithfulness": af, "avg_completeness": ac,
         "details": details, "is_rag": True,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
     }
 
 
@@ -944,6 +1134,7 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
                    judge_model: dict | None = None, quick_mode: bool = False,
                    user: str = ""):
     """后台执行评测主函数"""
+    results = {}  # 初始化，确保 except 块中可引用
     try:
         with _lock:
             _running_jobs[run_id] = {
@@ -952,8 +1143,6 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
                 "message": "初始化..." + ("（快速模式）" if quick_mode else ""),
                 "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
-
-        results = {}
         overall_correct = 0
         overall_total = 0
 
@@ -992,6 +1181,23 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
             overall_correct += result["correct"]
             overall_total += result["total"]
 
+            # ── 增量保存：每个 Benchmark 完成后立即持久化 ──
+            partial = dict(_running_jobs.get(run_id, {}))
+            partial.pop("_start_ts", None)
+            _save_run(run_id, {
+                "status": "running",
+                "model_id": model["id"],
+                "model_name": model["name"],
+                "benchmarks": dict(results),
+                "overall_score": round(overall_correct / overall_total * 100, 1) if overall_total else 0,
+                "overall_correct": overall_correct,
+                "overall_total": overall_total,
+                "completed_at": None,
+                "elapsed": round(time.time() - _running_jobs[run_id].get("_start_ts", time.time())),
+                "quick_mode": quick_mode,
+                "partial": True,
+            }, user=user)
+
         overall_score = round(overall_correct / overall_total * 100, 1) if overall_total else 0
 
         # 计算 Bootstrap 置信区间
@@ -1003,6 +1209,14 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
                 exp = str(dt.get("expected", ""))
                 all_answers.append((q_text, exp, is_correct))
         ci = bootstrap_ci(all_answers)
+
+        # 计算总体延迟和 Token 统计
+        total_latency = 0.0
+        total_tokens = 0
+        for bid, b_res in results.items():
+            total_latency += b_res.get("avg_latency", 0) * b_res.get("total", 0)
+            total_tokens += b_res.get("total_tokens", 0)
+        avg_latency = round(total_latency / overall_total, 2) if overall_total else 0
 
         final = {
             "status": "completed",
@@ -1016,6 +1230,8 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
             "quick_mode": quick_mode,
             "completed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "elapsed": round(time.time() - _running_jobs[run_id].get("_start_ts", time.time())),
+            "avg_latency": avg_latency,
+            "total_tokens": total_tokens,
         }
 
         with _lock:
@@ -1023,7 +1239,7 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
             _running_jobs[run_id]["status"] = "completed"
             _running_jobs[run_id]["progress"] = 100
 
-        # 持久化到 JSON
+        # 持久化到 JSON（覆盖之前的 partial 记录）
         _save_run(run_id, final, user=user)
 
     except Exception as e:
@@ -1034,16 +1250,43 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
                 "message": str(e),
                 "error": traceback.format_exc(),
             }
+        # 保存失败状态
+        failed = {
+            "status": "failed",
+            "model_id": model.get("id", ""),
+            "model_name": model.get("name", ""),
+            "benchmarks": results,
+            "overall_score": 0,
+            "overall_correct": 0,
+            "overall_total": 0,
+            "completed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "error": str(e),
+            "elapsed": 0,
+        }
+        _save_run(run_id, failed, user=user)
 
 
 def _save_run(run_id: str, result: dict, user: str = ""):
-    """将评测结果保存到 JSON 文件（按用户隔离）"""
+    """将评测结果保存到 JSON 文件（按 run_id 更新，支持增量保存）"""
     runs_file = DATA_DIR / "eval_runs.json"
     runs = []
     if runs_file.exists():
-        with open(runs_file, encoding="utf-8") as f:
-            runs = json.load(f)
-    runs.append({"run_id": run_id, "user": user, **result})
+        try:
+            with open(runs_file, encoding="utf-8") as f:
+                runs = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            runs = []
+
+    # 如果已存在同 run_id 的记录，更新之
+    updated = False
+    for i, r in enumerate(runs):
+        if r.get("run_id") == run_id:
+            runs[i] = {"run_id": run_id, "user": user, **result}
+            updated = True
+            break
+    if not updated:
+        runs.append({"run_id": run_id, "user": user, **result})
+
     runs_file.parent.mkdir(parents=True, exist_ok=True)
     with open(runs_file, "w", encoding="utf-8") as f:
         json.dump(runs, f, ensure_ascii=False, indent=2)
@@ -1082,6 +1325,10 @@ def get_run_status(run_id: str) -> Optional[dict]:
     # 从持久化文件查找（服务器重启后）
     for r in list_completed_runs():
         if r.get("run_id") == run_id:
+            # 缓存到内存
+            if r.get("status") == "completed":
+                with _lock:
+                    _completed_results[run_id] = r
             return r
     return None
 
@@ -1091,12 +1338,14 @@ def list_completed_runs() -> list:
     runs_file = DATA_DIR / "eval_runs.json"
     if not runs_file.exists():
         return []
-    with open(runs_file, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(runs_file, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return []
 
 
 def list_user_runs(username: str) -> list:
     """列出指定用户已完成的评测记录"""
     all_runs = list_completed_runs()
     return [r for r in all_runs if r.get("user") == username]
-

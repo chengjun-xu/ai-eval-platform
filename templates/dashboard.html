@@ -33,6 +33,19 @@
   </div>
 </div>
 
+<!-- 得分趋势图（仅在有历史数据时显示） -->
+{% if trend_labels_json and trend_labels_json != '[]' %}
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>📈 评测得分趋势</h3>
+    <span style="font-size:0.75rem;color:var(--text-muted)">最近 {{ trend_labels|length }} 次评测</span>
+  </div>
+  <div style="position:relative;height:220px">
+    <canvas id="trendChart"></canvas>
+  </div>
+</div>
+{% endif %}
+
 {% if total_models == 0 %}
 <!-- 首次使用引导 -->
 <div class="card" style="text-align:center;padding:3rem 2rem;border:1px dashed var(--border-light)">
@@ -96,25 +109,116 @@
       {% endfor %}
     </div>
     {% else %}
-    <p style="color:var(--text-muted);padding:1rem 0">还没有评测记录</p>
+    <p style="color:var(--text-muted);padding:1rem 0">还没有评测记录，去运行一个评测！</p>
     {% endif %}
   </div>
 </div>
 
-<!-- 最佳模型 -->
-{% if best_model_name %}
-<div class="card">
-  <div class="card-header">
-    <h3>🏆 当前最佳模型</h3>
-    <span class="tag">{{ best_score }} 分</span>
+<!-- 最佳模型 + 延迟/Token 统计 -->
+<div class="row mt-1" style="grid-template-columns: 1fr 1fr">
+  {% if best_model_name %}
+  <div class="card">
+    <div class="card-header">
+      <h3>🏆 当前最佳模型</h3>
+      <span class="tag">{{ best_score }} 分</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:1rem;padding:0.5rem 0">
+      <span style="width:12px;height:12px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      <strong style="font-size:1.1rem">{{ best_model_name }}</strong>
+      <span style="color:var(--text-muted)">{{ best_score }} 综合得分</span>
+    </div>
   </div>
-  <div style="display:flex;align-items:center;gap:1rem;padding:0.5rem 0">
-    <span style="width:12px;height:12px;border-radius:50%;background:var(--accent);display:inline-block"></span>
-    <strong style="font-size:1.1rem">{{ best_model_name }}</strong>
-    <span style="color:var(--text-muted)">{{ best_score }} 综合得分</span>
+  {% endif %}
+
+  {% if model_perf_stats %}
+  <div class="card">
+    <div class="card-header">
+      <h3>⚡ 响应性能</h3>
+      <span style="font-size:0.75rem;color:var(--text-muted)">按模型</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:0.5rem">
+      {% for stat in model_perf_stats %}
+      <div class="flex-between" style="font-size:0.85rem;padding:0.3rem 0;border-bottom:1px solid var(--border)">
+        <span><strong>{{ stat.model }}</strong></span>
+        <span style="color:var(--text-muted)">
+          ⏱ {{ stat.avg_latency }}s ·
+          🪙 {{ stat.total_tokens }} tokens
+        </span>
+      </div>
+      {% endfor %}
+    </div>
   </div>
+  {% endif %}
 </div>
 {% endif %}
-{% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // 趋势图
+  var trendLabels = {{ trend_labels_json | safe }};
+  var trendScores = {{ trend_scores_json | safe }};
+  if (trendLabels.length > 0) {
+    var ctx = document.getElementById('trendChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: trendLabels,
+        datasets: [{
+          label: '综合得分',
+          data: trendScores,
+          borderColor: '#00D4E0',
+          backgroundColor: 'rgba(0, 212, 224, 0.08)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.35,
+          pointBackgroundColor: function(ctx) {
+            var datasets = ctx.chart.data.datasets;
+            var data = datasets[0].data;
+            var idx = ctx.dataIndex;
+            if (data.length >= 2 && idx === data.length - 1) return '#00D4E0';
+            return '#0d9488';
+          },
+          pointBorderColor: '#fff',
+          pointBorderWidth: 1,
+          pointRadius: function(ctx) {
+            var data = ctx.chart.data.datasets[0].data;
+            return ctx.dataIndex === data.length - 1 ? 5 : 3;
+          },
+          pointHoverRadius: 6,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+            titleColor: '#e2e8f0',
+            bodyColor: '#00D4E0',
+            padding: 8,
+            cornerRadius: 6,
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#64748b', font: { size: 10 }, maxRotation: 0 },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          },
+          y: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { color: '#64748b', font: { size: 10 }, stepSize: 20 },
+            grid: { color: 'rgba(255,255,255,0.06)' },
+          }
+        }
+      }
+    });
+  }
+});
+</script>
 {% endblock %}

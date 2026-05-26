@@ -345,6 +345,34 @@ def dashboard():
                 best_score = sc
                 best_model_name = mn
 
+    # ── 得分趋势数据 ──────────────────────────────────────────────────────
+    trend_labels = []
+    trend_scores = []
+    for r in my_runs[-10:]:  # 最近 10 次
+        trend_labels.append(r.get("completed_at", "?")[-8:-3] if r.get("completed_at") else "?")
+        trend_scores.append(r.get("overall_score", 0))
+
+    # ── 模型性能统计（延迟 / Token） ──────────────────────────────────────
+    model_perf_stats = []
+    model_perf_data = {}
+    for r in my_runs:
+        mn = r.get("model_name", "")
+        lat = r.get("avg_latency", 0)
+        tok = r.get("total_tokens", 0)
+        if lat and tok:
+            if mn not in model_perf_data:
+                model_perf_data[mn] = {"total_latency": 0, "total_tokens": 0, "count": 0}
+            model_perf_data[mn]["total_latency"] += lat * r.get("overall_total", 0)
+            model_perf_data[mn]["total_tokens"] += tok
+            model_perf_data[mn]["count"] += r.get("overall_total", 0)
+    for mn, d in model_perf_data.items():
+        c = d["count"]
+        model_perf_stats.append({
+            "model": mn,
+            "avg_latency": round(d["total_latency"] / c, 2) if c else 0,
+            "total_tokens": d["total_tokens"],
+        })
+
     return render_template(
         "dashboard.html",
         total_models=total_models,
@@ -358,6 +386,10 @@ def dashboard():
         benchmarks_json=json.dumps(benchmarks),
         models_json=json.dumps(models),
         runs_json=json.dumps(my_runs),
+        trend_labels=trend_labels,
+        trend_labels_json=json.dumps(trend_labels),
+        trend_scores_json=json.dumps(trend_scores),
+        model_perf_stats=model_perf_stats,
     )
 
 

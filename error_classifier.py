@@ -15,8 +15,116 @@ Bad Case 归因分类模块
 
 面试亮点：展示"将诊断结论转化为训练策略"的能力。
 """
+import json
 import re
+from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# 自定义分类支持 — 用户可编辑 custom_categories.json 添加自有错误分类
+# 文件路径: data/custom_categories.json
+# ---------------------------------------------------------------------------
+
+CUSTOM_CATEGORIES_FILE = Path(__file__).parent / "data" / "custom_categories.json"
+
+# 加载失败时返回空
+_loaded_custom = None
+
+
+def _load_custom_categories() -> dict:
+    """加载用户自定义分类，支持 patterns、severity、training_suggestion"""
+    global _loaded_custom
+    if _loaded_custom is not None:
+        return _loaded_custom
+    path = CUSTOM_CATEGORIES_FILE
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _loaded_custom = data
+                return data
+        except (json.JSONDecodeError, IOError):
+            pass
+    _loaded_custom = {}
+    return {}
+
+
+def _create_default_custom_categories():
+    """如果文件不存在，创建默认模板"""
+    if not CUSTOM_CATEGORIES_FILE.exists():
+        CUSTOM_CATEGORIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        default = {
+            "custom_categories": {
+                "sample_custom": {
+                    "label": "自定义示例",
+                    "emoji": "🧪",
+                    "description": "这是一个自定义分类示例",
+                    "severity": "中",
+                    "patterns": ["示例关键词", "sample_keyword"],
+                    "benchmark_types": ["mmlu", "open_ended"],
+                    "training_suggestion": "根据自定义类别的归因结果进行针对性微调",
+                }
+            },
+            "_help": {
+                "说明": "在此文件中添加自定义错误分类。每个 key 作为分类 ID，必须包含：label(显示名), emoji(图标), description(描述), severity(严重度: 严重/高/中/低), patterns(正则或关键词列表), benchmark_types(适用评测类型列表), training_suggestion(训练建议)。patterns 中可以使用正则表达式。"
+            }
+        }
+        with open(CUSTOM_CATEGORIES_FILE, "w", encoding="utf-8") as f:
+            json.dump(default, f, ensure_ascii=False, indent=2)
+
+
+_create_default_custom_categories()
+
+
+def _match_custom_categories(predicted: str, benchmark_type: str) -> list[dict]:
+    """对用户自定义分类进行匹配检测
+
+    返回匹配上的自定义分类列表
+    """
+    custom = _load_custom_categories()
+    matches = []
+    predicted_lower = (predicted or "").lower()
+    for cat_id, cat_info in custom.get("custom_categories", {}).items():
+        patterns = cat_info.get("patterns", [])
+        btypes = cat_info.get("benchmark_types", [])
+        if btypes and benchmark_type not in btypes:
+            continue
+        for pat in patterns:
+            try:
+                if re.search(pat, predicted_lower, re.IGNORECASE):
+                    matches.append({
+                        "category": f"custom:{cat_id}",
+                        "label": cat_info.get("label", cat_id),
+                        "emoji": cat_info.get("emoji", "⚙️"),
+                        "severity": cat_info.get("severity", "中"),
+                        "detail": cat_info.get("description", ""),
+                        "training_suggestion": cat_info.get(
+                            "training_suggestion",
+                            "请根据自定义分类的归因结果进行针对性微调",
+                        ),
+                    })
+                    break
+            except re.error:
+                pass
+    return matches
+
+
+def get_all_categories() -> dict:
+    """获取所有分类（内置 + 自定义），前端展示用"""
+    all_cats = dict(ERROR_CATEGORIES)
+    custom = _load_custom_categories()
+    for cat_id, cat_info in custom.get("custom_categories", {}).items():
+        all_cats[f"custom:{cat_id}"] = {
+            "label": cat_info.get("label", cat_id),
+            "emoji": cat_info.get("emoji", "⚙️"),
+            "description": cat_info.get("description", ""),
+            "severity": cat_info.get("severity", "中"),
+            "training_suggestion": cat_info.get("training_suggestion", ""),
+            "is_custom": True,
+        }
+    return all_cats
+
 
 # ---------------------------------------------------------------------------
 # 错误分类常量
@@ -203,10 +311,13 @@ def classify_error(question: str, expected: str, predicted: str,
         if any(w in judge_reason for w in ["错误", "不准", "factual", "错误事实"]):
             signals.append("Judge 判定: 事实错误")
 
-    # 7. 最终分类决策
-    category = _decide_category(signals, benchmark_type, len(predicted or ""))
+    # 7. 自定义分类检测
+    custom_matches = _match_custom_categories(predicted, benchmark_type)
 
-    return {
+    # 8. 最终分类决策
+    category = _decide_category(signals, benchmark_type, len(predicted or ""), custom_matches)
+
+    result = {
         "category": category,
         "label": ERROR_CATEGORIES[category]["label"],
         "emoji": ERROR_CATEGORIES[category]["emoji"],
@@ -215,11 +326,14 @@ def classify_error(question: str, expected: str, predicted: str,
         "confidence": min(0.5 + 0.15 * len(signals), 0.95) if signals else 0.3,
         "detail": _generate_detail(category, signals, benchmark_type),
         "training_suggestion": ERROR_CATEGORIES[category]["training_suggestion"],
+        "custom_matches": custom_matches,
     }
+    return result
 
 
 def _decide_category(signals: list[str], benchmark_type: str,
-                     predicted_len: int) -> str:
+                     predicted_len: int,
+                     custom_matches: list[dict] | None = None) -> str:
     """综合信号做最终分类决策"""
     signal_text = " ".join(signals).lower()
 
@@ -309,11 +423,15 @@ def analyze_bad_cases(bad_cases: list[dict]) -> dict:
         result["benchmark"] = bench
         results.append(result)
 
-    # 统计
+    # 统计（含自定义分类）
     counts = {}
     for r in results:
         cat = r["label"]
         counts[cat] = counts.get(cat, 0) + 1
+        # 自定义分类单独统计
+        for cm in r.get("custom_matches", []):
+            cm_label = cm["label"]
+            counts[cm_label] = counts.get(cm_label, 0) + 1
 
     # 按数量排序
     sorted_counts = sorted(counts.items(), key=lambda x: -x[1])

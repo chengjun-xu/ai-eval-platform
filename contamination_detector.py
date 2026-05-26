@@ -54,6 +54,94 @@ def _jaccard_similarity(set_a: set, set_b: set) -> float:
     return len(set_a & set_b) / len(set_a | set_b)
 
 
+# ── TF-IDF 语义相似度 ─────────────────────────────────────────────────────
+# 使用 sklearn 的 TfidfVectorizer（如果可用），否则用简单的词频 TF 作为降级
+
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer as _Tfidf
+    _HAS_SKLEARN = True
+except ImportError:
+    _HAS_SKLEARN = False
+
+
+def _tfidf_cosine_similarity(text_a: str, text_b: str) -> float:
+    """计算两段文本的 TF-IDF 余弦相似度
+
+    使用 sklearn 的 TfidfVectorizer（精确），降级模式使用词袋 Jaccard。
+    针对中文使用字符级 n-gram（1-4字）以捕获语义。
+    """
+    if _HAS_SKLEARN:
+        import numpy as np
+        try:
+            # 中文用字符 n-gram，英文用单词 n-gram
+            # max_df 根据文档数动态调整，避免在少文本场景下误过滤
+            vec = _Tfidf(stop_words=None, max_features=2000,
+                        analyzer='char', ngram_range=(2, 4))
+            tfidf = vec.fit_transform([text_a, text_b])
+            tfidf_dense = tfidf.toarray()
+            dot = np.dot(tfidf_dense[0], tfidf_dense[1])
+            norm = np.linalg.norm(tfidf_dense[0]) * np.linalg.norm(tfidf_dense[1])
+            return float(dot / norm) if norm > 0 else 0.0
+        except Exception:
+            pass
+    # 降级：词袋 Jaccard
+    tokens_a = set(_tokenize(text_a))
+    tokens_b = set(_tokenize(text_b))
+    return _jaccard_similarity(tokens_a, tokens_b)
+
+
+def _semantic_self_contamination(texts: list[str]) -> dict:
+    """使用 TF-IDF 向量检测数据集的语义自相似度
+
+    返回：
+        {
+            "avg_semantic_similarity": float,  # 平均两两语义相似度
+            "max_semantic_similarity": float,   # 最高相似度
+            "similar_pair_count": int,          # 高度相似对的数量 (>0.7)
+            "note": str,                        # 解释
+        }
+    """
+    if len(texts) < 2:
+        return {"avg_semantic_similarity": 0.0, "max_semantic_similarity": 0.0,
+                "similar_pair_count": 0, "note": "数据量不足"}
+
+    n = len(texts)
+    sims = []
+    # 抽样计算，避免 O(n²)
+    max_pairs = min(n * (n - 1) // 2, 100)
+    count = 0
+    high_sim_pairs = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if count >= max_pairs:
+                break
+            sim = _tfidf_cosine_similarity(texts[i], texts[j])
+            sims.append(sim)
+            if sim > 0.7:
+                high_sim_pairs += 1
+            count += 1
+        if count >= max_pairs:
+            break
+
+    avg_sim = round(sum(sims) / len(sims), 4) if sims else 0.0
+    max_sim = round(max(sims), 4) if sims else 0.0
+
+    note = ""
+    if avg_sim > 0.5:
+        note = "⚠️ 数据集内部语义相似度偏高，可能存在冗余题目"
+    elif avg_sim > 0.3:
+        note = "📋 数据集中度正常，部分题目语义相近"
+    else:
+        note = "✅ 数据集题目间语义区分度较好"
+
+    return {
+        "avg_semantic_similarity": avg_sim,
+        "max_semantic_similarity": max_sim,
+        "similar_pair_count": high_sim_pairs,
+        "note": note,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 单题污染检测
 # ---------------------------------------------------------------------------
@@ -176,7 +264,10 @@ def analyze_dataset(dataset_items: list[dict],
     # 1. 自污染检测（题目间重复度）
     self_contamination = _check_self_contamination(question_texts)
 
-    # 2. 对参考语料的污染检测
+    # 2. 语义自相似度检测（TF-IDF）
+    semantic_sim = _semantic_self_contamination(question_texts)
+
+    # 3. 对参考语料的污染检测
     corpus = reference_corpus or []
     item_results = {}
     risk_dist = {"安全": 0, "低": 0, "中": 0, "高": 0, "严重": 0}
@@ -220,6 +311,7 @@ def analyze_dataset(dataset_items: list[dict],
         "risk_distribution": risk_dist,
         "item_level": item_results,
         "self_contamination": self_contamination,
+        "semantic_similarity": semantic_sim,
         "suggestion": _generate_suggestion(overall_risk, high_risk_count, total),
     }
 

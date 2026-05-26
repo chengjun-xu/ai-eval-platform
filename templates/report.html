@@ -29,6 +29,9 @@
     <div><span style="color:var(--green);font-weight:700">{{ runs_count }}</span> 次评测</div>
     <div><span style="color:var(--orange);font-weight:700">{{ benchmarks_count }}</span> 个 Benchmark</div>
     <div><span style="color:var(--text-muted)">耗时 {{ total_elapsed }}s</span></div>
+    {% if overall_ci and overall_ci.n %}
+    <div><span style="color:var(--blue)">⏱ {{ (total_elapsed / overall_ci.n)|round(1) }}s/题</span></div>
+    {% endif %}
   </div>
 </div>
 
