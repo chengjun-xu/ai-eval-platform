@@ -185,7 +185,7 @@ def _call_llm(model: dict, prompt: str, timeout: int = 60) -> str:
         "Content-Type": "application/json",
     }
     payload = {
-        "model": model.get("model_name", "gpt-4o-mini"),
+        "model": model.get("model_name") or model.get("name", "gpt-4o-mini"),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
         "max_tokens": 1024,
@@ -869,7 +869,11 @@ def _eval_rubric(model: dict, questions: list, progress_callback,
             total_weighted = sum(d.get("rubric_result", {}).get("weighted_total", 0) for d in details) / total
 
     avg_overall = round(total_weighted, 2) if use_rubric else 0.0
-    normalized = round(avg_overall / 5 * 100, 1) if avg_overall else 0.0
+    if not use_rubric:
+        # 没有 Judge 模型时，用正确率作为分数
+        normalized = round(sum(1 for d in details if d["correct"]) / total * 100, 1) if total else 0.0
+    else:
+        normalized = round(avg_overall / 5 * 100, 1) if avg_overall else 0.0
 
     return {
         "score": max(0, normalized),
