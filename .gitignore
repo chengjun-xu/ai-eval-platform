@@ -30,3 +30,9 @@ instance/
 # Runtime data files (API keys, user accounts, eval runs - sensitive)
 data/*.json
 !data/datasets/*.json
+
+# Logs
+logs/
+
+# Local docs
+使用指南.md
