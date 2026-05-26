@@ -435,6 +435,33 @@ def models_delete(model_id: str):
     return redirect(url_for("models_page"))
 
 
+@app.route("/models/edit/<model_id>", methods=["POST"])
+@login_required
+def models_edit(model_id: str):
+    u = session["user"]
+    data = request.form
+    updated = {
+        "id": model_id,
+        "name": data.get("name", "").strip(),
+        "provider": data.get("provider", "").strip(),
+        "api_base": data.get("api_base", "").strip(),
+        "api_key": data.get("api_key", "").strip(),
+        "model_name": data.get("model_name", "").strip(),
+        "description": data.get("description", "").strip(),
+        "user": u,
+    }
+    if not updated["name"]:
+        return jsonify({"error": "模型名称不能为空"}), 400
+    # 保留原有的 created_at
+    models = load_models()
+    for m in models:
+        if m["id"] == model_id and m.get("user") == u:
+            updated["created_at"] = m.get("created_at", "")
+            break
+    save_model(updated, u)
+    return redirect(url_for("models_page"))
+
+
 # ---- Judge 模型管理页面 -----------------------------------------------------
 
 @app.route("/judge-models")
@@ -1000,10 +1027,57 @@ def datasets_preview(filename: str):
         return jsonify({"error": "文件不存在"}), 404
     with open(fpath, encoding="utf-8") as f:
         items = json.load(f)
-    return jsonify({
-        "total": len(items),
-        "sample": items[:5] if isinstance(items, list) else items,
-    })
+
+
+@app.route("/datasets/edit/<filename>", methods=["POST"])
+@login_required
+def datasets_edit(filename: str):
+    """重命名自定义数据集"""
+    if "_custom" not in filename:
+        return jsonify({"error": "只能编辑自定义数据集"}), 400
+    new_name = request.form.get("name", "").strip()
+    if not new_name:
+        return jsonify({"error": "名称不能为空"}), 400
+    safe_name = new_name.replace(" ", "_").replace(".", "_")
+    save_name = f"{safe_name}_custom.json"
+    if save_name == filename:
+        return jsonify({"ok": True, "filename": save_name})
+    src = DATASETS_DIR / filename
+    dst = DATASETS_DIR / save_name
+    if dst.exists():
+        return jsonify({"error": f"目标文件名 {save_name} 已存在"}), 400
+    import shutil
+    shutil.move(str(src), str(dst))
+    return jsonify({"ok": True, "filename": save_name})
+
+
+@app.route("/api/history/search")
+@login_required
+def history_search():
+    """搜索评测历史"""
+    u = session["user"]
+    q = request.args.get("q", "").strip().lower()
+    runs = list_user_runs(u)
+
+    if not q:
+        return jsonify({"runs": runs})
+
+    results = []
+    for r in runs:
+        model = (r.get("model_name", "") or "").lower()
+        note = (r.get("note", "") or "").lower()
+        completed = (r.get("completed_at", "") or "").lower()
+        run_id = (r.get("run_id", "") or "").lower()
+        # 搜索 benchmark 名称和分数
+        bench_text = " ".join(
+            f"{bid} {bd.get('score', 0)}"
+            for bid, bd in r.get("benchmarks", {}).items()
+        ).lower()
+
+        if q in model or q in note or q in completed or q in run_id or q in bench_text:
+            results.append(r)
+
+    return jsonify({"runs": results, "total": len(results)})
 
 
 # ---------------------------------------------------------------------------

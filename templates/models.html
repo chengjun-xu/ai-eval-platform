@@ -59,7 +59,7 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>模型</th><th>Provider</th><th>操作</th></tr>
+          <tr><th>模型</th><th>Provider</th><th>API 模型名</th><th>操作</th></tr>
         </thead>
         <tbody>
           {% for m in models %}
@@ -74,9 +74,11 @@
               </div>
             </td>
             <td style="color:var(--text-muted)">{{ m.provider }}</td>
+            <td><code style="font-size:0.8rem">{{ m.model_name or '—' }}</code></td>
             <td>
+              <button onclick="editModel('{{ m.id }}')" style="background:none;border:none;color:var(--accent);font-size:0.85rem;cursor:pointer;margin-right:0.5rem">✏️ 编辑</button>
               <form method="post" action="{{ url_for('models_delete', model_id=m.id) }}" onsubmit="return confirm('确定删除模型「{{ m.name }}」？')" style="display:inline">
-                <button type="submit" style="background:none;border:none;color:var(--red);font-size:0.85rem;cursor:pointer">删除</button>
+                <button type="submit" style="background:none;border:none;color:var(--red);font-size:0.85rem;cursor:pointer">🗑️ 删除</button>
               </form>
             </td>
           </tr>
@@ -94,23 +96,100 @@
   </div>
 </div>
 
-<div class="card">
-  <div class="card-header">
-    <h3>快速入门：如何注册模型</h3>
-  </div>
-  <div style="color:var(--text-secondary);font-size:0.9rem;line-height:1.8">
-    <p><strong>1. API 模型（推荐）</strong> — 如果你的模型已部署并暴露 OpenAI 兼容 API：</p>
-    <ul style="margin:0.5rem 0 0.5rem 1.5rem">
-      <li>填写 API Base URL（如 <code>https://api.example.com/v1</code>）</li>
-      <li>填写 API Key</li>
-      <li>填写模型名称（如 <code>gpt-4o</code>）</li>
-    </ul>
-    <p><strong>2. 本地模型</strong> — 如果你的模型在本地运行（如通过 Ollama/vLLM 部署）：</p>
-    <ul style="margin:0.5rem 0 0 1.5rem">
-      <li>API Base URL 填本地地址（如 <code>http://localhost:11434/v1</code>）</li>
-      <li>API Key 可填任意占位符</li>
-    </ul>
+<!-- 编辑模型弹出框 -->
+<div id="editModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center"
+     onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--bg-card);border-radius:var(--radius);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:1.5rem">
+    <div class="flex-between" style="margin-bottom:1rem">
+      <h3 style="margin:0">✏️ 编辑模型</h3>
+      <button onclick="closeEdit()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-muted)">✕</button>
+    </div>
+    <form id="editForm" method="post" onsubmit="return submitEdit(event)">
+      <div class="form-group">
+        <label>模型名称 *</label>
+        <input type="text" name="name" id="edit_name" required>
+      </div>
+      <div class="form-group">
+        <label>提供商</label>
+        <input type="text" name="provider" id="edit_provider">
+      </div>
+      <div class="form-group">
+        <label>API Base URL</label>
+        <input type="text" name="api_base" id="edit_api_base">
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <input type="password" name="api_key" id="edit_api_key">
+      </div>
+      <div class="form-group">
+        <label>模型名称（发送给 API 的 model 参数）</label>
+        <input type="text" name="model_name" id="edit_model_name" placeholder="例如: deepseek-chat">
+      </div>
+      <div class="form-group">
+        <label>描述</label>
+        <textarea name="description" id="edit_description" style="width:100%;padding:0.6rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem;outline:none;resize:vertical;min-height:60px;font-family:inherit"></textarea>
+      </div>
+      <button type="submit" class="btn-primary">保存修改</button>
+      <button type="button" onclick="closeEdit()" style="margin-left:0.5rem;background:none;border:1px solid var(--border);color:var(--text-secondary);padding:0.6rem 1.2rem;border-radius:var(--radius-sm);cursor:pointer">取消</button>
+    </form>
   </div>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+var currentEditId = '';
+
+function editModel(modelId) {
+  // 从已有数据中查找
+  var row = event.target.closest('tr');
+  if (!row) return;
+  var cells = row.querySelectorAll('td');
+  var name = cells[0].querySelector('.model-name').textContent.trim();
+  var provider = cells[1].textContent.trim();
+  var apiModel = cells[2].textContent.trim();
+
+  // 从 models_json 获取完整数据
+  try {
+    var models = {{ models_json | safe }};
+    var m = models.find(function(x) { return x.id === modelId; });
+    if (m) {
+      currentEditId = modelId;
+      document.getElementById('edit_name').value = m.name || '';
+      document.getElementById('edit_provider').value = m.provider || '';
+      document.getElementById('edit_api_base').value = m.api_base || '';
+      document.getElementById('edit_api_key').value = m.api_key || '';
+      document.getElementById('edit_model_name').value = m.model_name || '';
+      document.getElementById('edit_description').value = m.description || '';
+      document.getElementById('editForm').action = '/models/edit/' + modelId;
+      document.getElementById('editModal').style.display = 'flex';
+    }
+  } catch(e) {
+    alert('加载模型数据失败');
+  }
+}
+
+function closeEdit() {
+  document.getElementById('editModal').style.display = 'none';
+}
+
+function submitEdit(e) {
+  e.preventDefault();
+  var form = document.getElementById('editForm');
+  var data = new FormData(form);
+  fetch(form.action, {
+    method: 'POST',
+    body: new URLSearchParams(data),
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+  }).then(function(r) {
+    if (r.redirected) {
+      window.location.href = r.url;
+    } else {
+      location.reload();
+    }
+  });
+  return false;
+}
+</script>
 {% endblock %}

@@ -106,8 +106,9 @@
           <td>
             <button onclick="previewDataset('{{ f.name }}')" class="btn-sm" style="font-size:0.8rem">预览</button>
             {% if '_custom' in f.name %}
+            <button onclick="renameDataset('{{ f.name }}')" class="btn-sm" style="font-size:0.8rem;color:var(--accent);background:none;border:none;cursor:pointer">✏️</button>
             <form method="post" action="{{ url_for('datasets_delete', filename=f.name) }}" style="display:inline" onsubmit="return confirm('确认删除 {{ f.name }}？')">
-              <button type="submit" class="btn-sm" style="font-size:0.8rem;color:var(--red);background:none;border:none;cursor:pointer">删除</button>
+              <button type="submit" class="btn-sm" style="font-size:0.8rem;color:var(--red);background:none;border:none;cursor:pointer">🗑️</button>
             </form>
             {% endif %}
           </td>
@@ -209,6 +210,28 @@ function previewDataset(filename) {
       }
       document.getElementById('previewModal').style.display = 'flex';
     });
+}
+
+function renameDataset(filename) {
+  var currentName = filename.replace('_custom.json', '');
+  var newName = prompt('重命名数据集（输入新名称）：', currentName);
+  if (!newName || newName === currentName) return;
+  
+  var formData = new FormData();
+  formData.append('name', newName);
+  
+  fetch('/datasets/edit/' + filename, {
+    method: 'POST',
+    body: formData,
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      location.reload();
+    } else {
+      alert('❌ ' + (data.error || '重命名失败'));
+    }
+  });
 }
 </script>
 {% endblock %}
