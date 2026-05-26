@@ -7,9 +7,16 @@
     <h2>📋 评测历史</h2>
     <p>全部评测记录 · 共 <strong>{{ stats.total_runs }}</strong> 次</p>
   </div>
-  <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-flex;align-items:center;gap:0.4rem;width:auto;padding:0.5rem 1.2rem;text-decoration:none;font-size:0.9rem">
-    <span style="font-size:1rem">🚀</span> 新评测
-  </a>
+  <div style="display:flex;gap:0.5rem">
+    {% if runs %}
+    <button onclick="clearAll()" class="btn-primary" style="display:inline-flex;align-items:center;gap:0.4rem;width:auto;padding:0.5rem 1.2rem;text-decoration:none;font-size:0.85rem;background:var(--red);border-color:var(--red)">
+      🗑️ 清空全部
+    </button>
+    {% endif %}
+    <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-flex;align-items:center;gap:0.4rem;width:auto;padding:0.5rem 1.2rem;text-decoration:none;font-size:0.9rem">
+      🚀 新评测
+    </a>
+  </div>
 </div>
 
 {% if runs %}
@@ -18,7 +25,7 @@
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.75rem;margin-bottom:1.25rem">
   <div class="card" style="text-align:center;padding:0.75rem 0.5rem">
     <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">总次数</div>
-    <div style="font-size:1.6rem;font-weight:800;color:var(--accent)">{{ stats.total_runs }}</div>
+    <div style="font-size:1.6rem;font-weight:800;color:var(--accent)" id="totalRuns">{{ stats.total_runs }}</div>
   </div>
   <div class="card" style="text-align:center;padding:0.75rem 0.5rem">
     <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">平均分</div>
@@ -41,12 +48,12 @@
   <div style="display:flex;align-items:center;gap:0.5rem;padding:0.6rem 0;margin-bottom:0.4rem;border-bottom:1px solid var(--border)">
     <span style="font-size:1.2rem">🤖</span>
     <span style="font-weight:700;font-size:1.05rem">{{ mn }}</span>
-    <span class="tag" style="font-size:0.65rem">{{ group|length }} 次</span>
+    <span class="tag" style="font-size:0.65rem" id="groupCount-{{ loop.index }}">{{ group|length }} 次</span>
   </div>
 
-  <div style="display:flex;flex-direction:column;gap:0.6rem">
+  <div style="display:flex;flex-direction:column;gap:0.6rem" id="group-{{ loop.index }}">
     {% for r in group %}
-    <div class="card" style="padding:1rem;cursor:pointer;transition:all 0.15s" onclick="location.href='{{ url_for('eval_status', run_id=r.run_id) }}'">
+    <div class="card" style="padding:1rem;transition:all 0.15s" id="run-{{ r.run_id }}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
 
         <!-- 左侧：时间 + 辅助信息 -->
@@ -58,6 +65,11 @@
           <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.15rem">
             ⏱ {{ r.elapsed }}s · {{ r.overall_correct }}/{{ r.overall_total }}
           </div>
+          {% if r.note %}
+          <div style="font-size:0.75rem;color:var(--accent);margin-top:0.2rem;font-style:italic">
+            📝 {{ r.note[:30] }}{% if r.note|length > 30 %}…{% endif %}
+          </div>
+          {% endif %}
         </div>
 
         <!-- 中间：Benchmark 芯片 -->
@@ -83,8 +95,10 @@
             {% endif %}
           </div>
           <div style="display:flex;flex-direction:column;gap:0.25rem">
-            <a href="{{ url_for('eval_status', run_id=r.run_id) }}" class="btn-primary" style="font-size:0.72rem;padding:0.2rem 0.55rem;width:auto;text-decoration:none;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">详情</a>
-            <a href="{{ url_for('report', model_name=r.model_name) }}" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:var(--bg-hover);color:var(--text-secondary);border-radius:var(--radius-sm);text-decoration:none;text-align:center;white-space:nowrap;border:1px solid var(--border)" onclick="event.stopPropagation()">报告</a>
+            <a href="{{ url_for('eval_status', run_id=r.run_id) }}" class="btn-primary" style="font-size:0.72rem;padding:0.2rem 0.55rem;width:auto;text-decoration:none;text-align:center;white-space:nowrap">详情</a>
+            <a href="{{ url_for('report', model_name=r.model_name) }}" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:var(--bg-hover);color:var(--text-secondary);border-radius:var(--radius-sm);text-decoration:none;text-align:center;white-space:nowrap;border:1px solid var(--border)">报告</a>
+            <button onclick="addNote('{{ r.run_id }}')" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:transparent;color:var(--text-muted);border:1px dashed var(--border);border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap" title="添加备注">📝 备注</button>
+            <button onclick="deleteRun('{{ r.run_id }}')" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:transparent;color:var(--red);border:1px solid transparent;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap" title="删除此记录">🗑️ 删除</button>
           </div>
         </div>
 
@@ -104,4 +118,52 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+function deleteRun(runId) {
+  if (!confirm('确定要删除这条评测记录吗？')) return;
+  fetch('/history/delete/' + runId, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        var el = document.getElementById('run-' + runId);
+        if (el) el.style.display = 'none';
+        // 更新总数
+        var totalEl = document.getElementById('totalRuns');
+        if (totalEl) totalEl.textContent = parseInt(totalEl.textContent) - 1;
+      }
+    });
+}
+
+function clearAll() {
+  if (!confirm('确定要清空所有评测记录吗？此操作不可恢复！')) return;
+  fetch('/history/clear', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) location.reload();
+    });
+}
+
+function addNote(runId) {
+  var currentNote = '';
+  var el = document.getElementById('run-' + runId);
+  if (el) {
+    var noteEl = el.querySelector('[style*=\"font-style:italic\"]');
+    if (noteEl) currentNote = noteEl.textContent.replace('📝 ','').replace('…','');
+  }
+  var text = prompt('添加备注（留空清除）：', currentNote);
+  if (text === null) return; // cancelled
+  fetch('/history/note/' + runId, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ note: text }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) location.reload();
+    });
+}
+</script>
 {% endblock %}

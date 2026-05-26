@@ -1060,6 +1060,76 @@ def agents_run():
     })
 
 
+# ---- 历史记录管理：删除 / 备注 / 清空 ---------------------------------------
+
+def _rewrite_runs(predicate_fn):
+    """通用的评测记录修改函数，predicate_fn(run) 返回 True 保留，False 删除"""
+    runs_file = DATA_DIR / "eval_runs.json"
+    if not runs_file.exists():
+        return
+    try:
+        with open(runs_file, encoding="utf-8") as f:
+            runs = json.load(f)
+        new_runs = [r for r in runs if predicate_fn(r)]
+        with open(runs_file, "w", encoding="utf-8") as f:
+            json.dump(new_runs, f, ensure_ascii=False, indent=2)
+    except (json.JSONDecodeError, IOError):
+        pass
+
+
+@app.route("/history/delete/<run_id>", methods=["POST"])
+@login_required
+def history_delete(run_id):
+    u = session["user"]
+
+    def keep(r):
+        return not (r.get("run_id") == run_id and r.get("user") == u)
+
+    _rewrite_runs(keep)
+    from eval_runner import _completed_results as _cr
+    _cr.pop(run_id, None)
+    return jsonify({"ok": True})
+
+
+@app.route("/history/clear", methods=["POST"])
+@login_required
+def history_clear():
+    u = session["user"]
+
+    def keep(r):
+        return r.get("user") != u
+
+    _rewrite_runs(keep)
+    from eval_runner import _completed_results as _cr
+    for k in list(_cr.keys()):
+        _cr.pop(k, None)
+    return jsonify({"ok": True})
+
+
+@app.route("/history/note/<run_id>", methods=["POST"])
+@login_required
+def history_note(run_id):
+    u = session["user"]
+    note = request.json.get("note", "").strip()
+
+    runs_file = DATA_DIR / "eval_runs.json"
+    try:
+        with open(runs_file, encoding="utf-8") as f:
+            runs = json.load(f)
+        for r in runs:
+            if r.get("run_id") == run_id and r.get("user") == u:
+                if note:
+                    r["note"] = note
+                else:
+                    r.pop("note", None)
+                break
+        with open(runs_file, "w", encoding="utf-8") as f:
+            json.dump(runs, f, ensure_ascii=False, indent=2)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ---------------------------------------------------------------------------
 # 启动
 # ---------------------------------------------------------------------------
