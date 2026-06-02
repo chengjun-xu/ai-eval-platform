@@ -108,6 +108,9 @@
           <div style="display:flex;flex-direction:column;gap:0.25rem">
             <a href="{{ url_for('eval_status', run_id=r.run_id) }}" class="btn-primary" style="font-size:0.72rem;padding:0.2rem 0.55rem;width:auto;text-decoration:none;text-align:center;white-space:nowrap">详情</a>
             <a href="{{ url_for('report', model_name=r.model_name, run_id=r.run_id) }}" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:var(--bg-hover);color:var(--text-secondary);border-radius:var(--radius-sm);text-decoration:none;text-align:center;white-space:nowrap;border:1px solid var(--border)">报告</a>
+            {% if r.benchmarks and ('agent_safety' in r.benchmarks or 'agent_safety_sample' in r.benchmarks) %}
+            <a href="{{ url_for('agent_safety_report', model_name=r.model_name, run_id=r.run_id) }}" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:rgba(245,158,11,0.15);color:var(--orange);border-radius:var(--radius-sm);text-decoration:none;text-align:center;white-space:nowrap;border:1px solid rgba(245,158,11,0.3)">🛡️ 安全</a>
+            {% endif %}
             <button onclick="addNote('{{ r.run_id }}')" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:transparent;color:var(--text-muted);border:1px dashed var(--border);border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap" title="添加备注">📝 备注</button>
             <button onclick="deleteRun('{{ r.run_id }}')" style="font-size:0.72rem;padding:0.2rem 0.55rem;background:transparent;color:var(--red);border:1px solid transparent;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap" title="删除此记录">🗑️ 删除</button>
           </div>

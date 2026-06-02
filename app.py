@@ -290,6 +290,10 @@ def load_benchmarks() -> list:
         "rag_eval_custom":   {"name": "RAG",     "full_name": "RAG 证据忠实性评测",
                               "category": "综合能力", "icon": "link",
                               "desc": "评估模型的 RAG 能力，包括证据忠实性、完整性和幻觉检测，覆盖医学知识、医疗政策、技术、伦理合规等场景。"},
+        # ── Agent 安全风险评测 ──
+        "agent_safety_sample":{"name": "Agent安全", "full_name": "Agent 安全风险评测",
+                               "category": "安全合规", "icon": "shield-alert",
+                               "desc": "评估模型在 Agent 场景下的安全防御能力，覆盖指令注入、工具滥用、安全边界、逻辑一致性等4类18种攻击场景。"},
         # ── 官方标准化数据集 ──
         "mmlu_official":     {"name": "MMLU",     "full_name": "MMLU (官方, 57学科)",
                                 "category": "知识理解", "icon": "book",
@@ -1434,7 +1438,7 @@ def history_page():
 
 # ---- 报告生成 ---------------------------------------------------------------
 
-ICONS = {"MMLU": "🧠", "GSM8K": "🔢", "HumanEval": "💻", "OpenEval": "📝", "SAFETY": "🛡️", "SAFEGUARD": "🛡️", "MEDQA": "🏥", "C-EVAL": "🇨🇳", "AGENT": "🤖", "RAG": "🔗"}
+ICONS = {"MMLU": "🧠", "GSM8K": "🔢", "HumanEval": "💻", "OpenEval": "📝", "SAFETY": "🛡️", "SAFEGUARD": "🛡️", "MEDQA": "🏥", "C-EVAL": "🇨🇳", "AGENT": "🤖", "RAG": "🔗", "Agent安全": "🛡️"}
 
 @app.route("/report/<model_name>")
 @app.route("/report/<model_name>/<run_id>")
@@ -1602,6 +1606,61 @@ def report(model_name: str, run_id: str = "") -> str:
         contamination_reports=contamination_reports,
         attribution=attribution,
         benchmarks_json=json.dumps(load_benchmarks()),
+    )
+
+
+# ---- Agent 安全风险报告 -------------------------------------------------
+
+
+@app.route("/agent-safety-report/<model_name>")
+@app.route("/agent-safety-report/<model_name>/<run_id>")
+@login_required
+def agent_safety_report(model_name: str, run_id: str = ""):
+    """Agent 安全风险评测结果报告页"""
+    u = session["user"]
+    runs = list_user_runs(u)
+    if run_id:
+        model_runs = [r for r in runs if r.get("run_id") == run_id]
+    else:
+        model_runs = [r for r in runs if r.get("model_name") == model_name
+                      and r.get("benchmarks", {}).get("agent_safety")
+                      or r.get("benchmarks", {}).get("agent_safety_sample")]
+
+    if not model_runs:
+        return render_template("agent_safety_report.html",
+                               model_name=model_name, overall_score=0,
+                               total=0, safe_count=0, details=[],
+                               category_summary={}, total_tokens=0,
+                               avg_latency=0, report_date="—",
+                               safe_rate=0)
+
+    last_run = model_runs[-1]
+    benchmarks = last_run.get("benchmarks", {})
+
+    # 查找 agent_safety 结果
+    safety_result = benchmarks.get("agent_safety") or benchmarks.get("agent_safety_sample") or {}
+    details = safety_result.get("details", [])
+    cat_summary = safety_result.get("category_summary", {})
+    overall_score = safety_result.get("score", 0)
+    total = safety_result.get("total", 0)
+    correct = safety_result.get("correct", 0)
+    total_tokens = safety_result.get("total_tokens", 0)
+    avg_latency = safety_result.get("avg_latency", 0)
+    report_date = last_run.get("completed_at", "")[:10] or "—"
+    safe_rate = round(correct / total * 100, 1) if total else 0
+
+    return render_template(
+        "agent_safety_report.html",
+        model_name=model_name,
+        overall_score=overall_score,
+        total=total,
+        safe_count=correct,
+        safe_rate=safe_rate,
+        details=details,
+        category_summary=cat_summary,
+        total_tokens=total_tokens,
+        avg_latency=avg_latency,
+        report_date=report_date,
     )
 
 

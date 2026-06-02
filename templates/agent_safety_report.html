@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Agent 安全风险报告{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>🛡️ Agent 安全风险评测报告</h2>
+    <p>
+      模型「<strong>{{ model_name }}</strong>」在 Agent 安全风险场景下的表现
+      · {{ total }} 个测试用例 · {{ report_date }}
+    </p>
+  </div>
+  <div style="display:flex;gap:0.5rem;align-items:center">
+    <span class="tag {% if overall_score >= 70 %}tag-green{% elif overall_score >= 40 %}tag-yellow{% else %}tag-red{% endif %}"
+          style="font-size:1rem;padding:0.3rem 1rem">
+      综合安全分: {{ overall_score }}%
+    </span>
+  </div>
+</div>
+
+<!-- 全局统计卡片 -->
+<div class="card-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1.5rem">
+  <div class="card" style="text-align:center;padding:1rem">
+    <div style="font-size:2rem;color:var(--accent)">🛡️</div>
+    <div style="font-size:1.5rem;font-weight:700;margin:0.3rem 0">{{ overall_score }}%</div>
+    <div style="color:var(--text-muted);font-size:0.85rem">综合安全分</div>
+  </div>
+  <div class="card" style="text-align:center;padding:1rem">
+    <div style="font-size:2rem;color:{{ 'var(--green)' if safe_rate >= 70 else 'var(--red)' }}">{{ safe_count }}/{{ total }}</div>
+    <div style="color:var(--text-muted);font-size:0.85rem">通过测试数</div>
+  </div>
+  <div class="card" style="text-align:center;padding:1rem">
+    <div style="font-size:2rem;color:var(--text-muted)">{{ total_tokens }}</div>
+    <div style="color:var(--text-muted);font-size:0.85rem">总 Token 消耗</div>
+  </div>
+  <div class="card" style="text-align:center;padding:1rem">
+    <div style="font-size:2rem;color:var(--text-muted)">{{ avg_latency }}s</div>
+    <div style="color:var(--text-muted);font-size:0.85rem">平均延迟</div>
+  </div>
+</div>
+
+<!-- 各类别得分 -->
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header"><h3>📊 安全风险类别得分</h3></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>风险类别</th><th>测试数</th><th>平均分</th><th>通过数</th><th>通过率</th></tr>
+      </thead>
+      <tbody>
+        {% for cat, info in category_summary.items() %}
+        <tr>
+          <td>
+            {% if cat == 'prompt_injection' %}
+              <span style="color:var(--orange)">📨</span> 指令注入
+            {% elif cat == 'tool_misuse' %}
+              <span style="color:var(--red)">🔧</span> 工具滥用
+            {% elif cat == 'safety_boundary' %}
+              <span style="color:var(--purple)">🛡️</span> 安全边界
+            {% elif cat == 'logic_consistency' %}
+              <span style="color:var(--accent)">🔗</span> 逻辑一致性
+            {% else %}
+              <span>📋</span> {{ cat }}
+            {% endif %}
+          </td>
+          <td>{{ info.count }}</td>
+          <td><strong>{{ info.avg_score }}%</strong></td>
+          <td>{{ info.pass_count }}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+              <div style="flex:1;height:6px;background:var(--bg-input);border-radius:3px;max-width:100px">
+                <div style="height:100%;border-radius:3px;width:{{ (info.pass_count / info.count * 100) if info.count else 0 }}%;background:{{ 'var(--green)' if info.pass_count / info.count >= 0.6 else 'var(--red)' }}"></div>
+              </div>
+              {{ (info.pass_count / info.count * 100) | round if info.count else 0 }}%
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 详细测试用例 -->
+<div class="card">
+  <div class="card-header">
+    <h3>🔍 各测试用例详情</h3>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:0.75rem">
+    {% for d in details %}
+    <div class="card" style="border-left:4px solid {{ 'var(--green)' if d.correct else 'var(--red)' }};padding:1rem">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem">
+        <div>
+          <strong style="font-size:1.05rem">
+            {% if d.category == 'prompt_injection' %}📨{% elif d.category == 'tool_misuse' %}🔧{% elif d.category == 'safety_boundary' %}🛡️{% else %}🔗{% endif %}
+            {{ d.scenario[:50] }}
+          </strong>
+          <span class="tag" style="margin-left:0.5rem;font-size:0.75rem">{{ d.test_type }}</span>
+          {% if d.difficulty %}
+          <span class="tag" style="font-size:0.75rem;
+            {% if d.difficulty == '简单' %}background:var(--green-transparent);color:var(--green)
+            {% elif d.difficulty == '中等' %}background:var(--orange-transparent);color:var(--orange)
+            {% else %}background:var(--red-transparent);color:var(--red){% endif %}">{{ d.difficulty }}</span>
+          {% endif %}
+        </div>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <div style="font-weight:700;font-size:1.1rem;color:{{ 'var(--green)' if d.correct else 'var(--red)' }}">
+            {{ (d.safety_score * 100) | round }}%
+          </div>
+          <span style="font-size:1.2rem">{{ '✅' if d.correct else '❌' }}</span>
+        </div>
+      </div>
+
+      <!-- 得分维度 -->
+      <div style="display:flex;gap:1rem;margin-bottom:0.5rem;font-size:0.85rem;color:var(--text-muted)">
+        <span>风险识别: {{ d.risk_detection }}/5</span>
+        <span>拒绝策略: {{ d.refusal_strategy }}/5</span>
+        <span>替代方案: {{ d.alternative }}/5</span>
+      </div>
+
+      <!-- 用户请求（可折叠） -->
+      <details>
+        <summary style="cursor:pointer;color:var(--text-muted);font-size:0.85rem">📋 用户请求</summary>
+        <pre style="background:var(--bg-input);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.8rem;margin-top:0.3rem;max-height:120px;overflow:auto">{{ d.user_request }}</pre>
+      </details>
+
+      <!-- 模型回复 -->
+      <details>
+        <summary style="cursor:pointer;color:var(--text-muted);font-size:0.85rem">🤖 模型回答</summary>
+        <pre style="background:var(--bg-input);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.8rem;margin-top:0.3rem;max-height:200px;overflow:auto;white-space:pre-wrap">{{ d.predicted }}</pre>
+      </details>
+
+      <!-- Judge 评语 -->
+      {% if d.judge_reason %}
+      <div style="margin-top:0.5rem;padding:0.4rem 0.6rem;background:var(--bg-input);border-radius:var(--radius-sm);font-size:0.85rem;color:var(--text-muted)">
+        <span style="color:var(--accent)">Judge 评语:</span> {{ d.judge_reason }}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<style>
+.tag-green {
+  background: rgba(34,197,94,0.15); color: #22c55e;
+}
+.tag-yellow {
+  background: rgba(245,158,11,0.15); color: #f59e0b;
+}
+.tag-red {
+  background: rgba(239,68,68,0.15); color: #ef4444;
+}
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.card-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
+}
+.card-header h3 { margin: 0; font-size: 1rem; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+</style>
+{% endblock %}
