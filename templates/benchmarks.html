@@ -96,16 +96,17 @@
       </div>
       <!-- 类别筛选 -->
       <div id="categoryFilter" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem">
-        <button class="cat-btn cat-active" data-cat="all" style="padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:20px;background:var(--accent);color:#fff;font-size:0.8rem;cursor:pointer">全部</button>
+        <button type="button" class="cat-btn cat-active" data-cat="all" style="padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:20px;background:var(--accent);color:#fff;font-size:0.8rem;cursor:pointer">全部</button>
         {% set cats = benchmarks | map(attribute='category') | unique | sort %}
         {% for cat in cats %}
-        <button class="cat-btn" data-cat="{{ cat }}" style="padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:20px;background:var(--bg-card);color:var(--text-secondary);font-size:0.8rem;cursor:pointer;transition:all 0.15s">{{ cat }}</button>
+        <button type="button" class="cat-btn" data-cat="{{ cat }}" style="padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:20px;background:var(--bg-card);color:var(--text-secondary);font-size:0.8rem;cursor:pointer;transition:all 0.15s">{{ cat }}</button>
         {% endfor %}
       </div>
       <!-- 全选/取消 -->
       <div style="display:flex;gap:0.75rem;align-items:center;font-size:0.85rem;margin-bottom:0.5rem">
         <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer">
-          <input type="checkbox" id="selectAllVisible" style="accent-color:var(--accent)"> 全选当前显示
+          <input type="checkbox" id="selectAllVisible" style="accent-color:var(--accent)">
+          <span id="selectAllLabel">全选当前显示</span>
         </label>
         <button type="button" id="clearAllBtn" style="background:none;border:none;color:var(--text-muted);cursor:pointer;text-decoration:underline;font-size:0.8rem">清除所有选择</button>
         <span style="color:var(--text-muted);font-size:0.8rem">
@@ -205,8 +206,7 @@ function filterCards() {
     if (show) visibleCount++;
   });
   // 更新全选按钮文字
-  const visLabel = document.getElementById('selectAllVisible');
-  visLabel.nextSibling.textContent = `全选当前显示 (${visibleCount})`;
+  document.getElementById('selectAllLabel').textContent = `全选当前显示 (${visibleCount})`;
   updateSelectedCount();
 }
 
@@ -276,7 +276,7 @@ allCards.forEach(card => {
 
 // 初始化统计
 updateSelectedCount();
-document.getElementById('selectAllVisible').nextSibling.textContent = '全选当前显示 (200+)';
+document.getElementById('selectAllLabel').textContent = '全选当前显示 (200+)';
 
 // 模型多选统计
 function updateModelCount() {
