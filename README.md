@@ -40,6 +40,79 @@
 
 ---
 
+## 🚀 快速开始
+
+> **只需 3 步，5 分钟内开始评测你的第一个模型。**
+
+### 环境要求
+
+- **Python 3.10+**（推荐 3.11）
+- **pip**（Python 包管理器）
+- 一台能联网的电脑（macOS / Linux / Windows 均可）
+
+### 第 1 步：克隆项目
+
+```bash
+git clone https://github.com/chengjun-xu/ai-eval-platform.git
+cd ai-eval-platform
+```
+
+> 💡 **没有 git？** 也可以直接去 GitHub 页面点「Code → Download ZIP」，解压后进入目录。
+
+### 第 2 步：安装依赖
+
+```bash
+# 方法一：使用 requirements.txt（推荐）
+pip install -r requirements.txt
+
+# 方法二：直接指定
+pip install flask requests
+```
+
+> 📦 全部依赖仅 **2 个包**（flask + requests），其他全是 Python 标准库，无需复杂环境配置。
+
+#### （可选）启用 OpenCompass 后端
+
+```bash
+pip install opencompass
+```
+
+> 不安装也完全不影响使用，平台会自动检测并优雅降级。
+
+### 第 3 步：启动服务
+
+```bash
+# 推荐：设置 session 密钥（不设置也能用，但重启后需要重新登录）
+export EVAL_PLATFORM_SECRET="your-random-secret-here"
+
+# 启动
+python3 app.py
+```
+
+看到以下输出说明启动成功：
+
+```
+✅ 模型管理: models.json 已加载 (N 个模型)
+✅ 数据集注册: MMLU, GSM8K, HumanEval, C-Eval ...
+💡 EVAL_PLATFORM_SECRET 环境变量未设置（使用自动生成的 session 密钥）
+ * Running on http://127.0.0.1:5001
+```
+
+> 🔗 浏览器访问 **http://localhost:5001**
+
+### 第 4 步：开始使用
+
+| 步骤 | 操作 | 说明 |
+|------|------|------|
+| 1 | 点击 **「立即注册」** | 创建你的账户 |
+| 2 | 登录后进入 **「模型管理」** | 添加你的 LLM（支持 OpenAI 兼容 API） |
+| 3 | 进入 **「Benchmark 评测」** | 选择一个模型 + 数据集 → 点击评测 |
+| 4 | 查看 **「评测报告」** | 自动生成得分、Bad Case、弱项分析 |
+
+> 🎬 **第一次评测建议：** 先选 MMLU sample（15 题，几秒出结果），体验完整流程后再跑大数据集。
+
+---
+
 ## 🗺️ 平台架构
 
 ```
@@ -68,22 +141,21 @@ ai-eval-platform/
 │   └── metrics.py                # BLEU / ROUGE-L / F1 / 余弦相似度
 │
 ├── 📁 data/
-│   ├── models.json               # 模型注册信息（含 API key，已 gitignore）
+│   ├── models.json               # 模型注册信息（已 gitignore）
 │   ├── judge_models.json         # Judge 模型信息
 │   ├── eval_runs.json            # 评测历史记录
-│   └── datasets/                 # 评测数据集
-│       ├── mmlu_sample.json / mmlu_official.json       # MMLU 知识理解
-│       ├── gsm8k_sample.json / gsm8k_official.json     # GSM8K 数学推理
-│       ├── humaneval_sample.json / humaneval_official.json  # HumanEval 代码
-│       ├── open_ended_sample.json / mt_bench_sample.json   # 开放题/多轮对话
-│       ├── medical_custom.json / med_*_official.json       # 医疗评测
-│       ├── safety_custom.json           # SafeGuard 安全合规
+│   └── datasets/                 # 评测数据集（随仓库一起下载）
+│       ├── mmlu_sample.json / mmlu_official.json       # MMLU
+│       ├── gsm8k_sample.json / gsm8k_official.json     # GSM8K
+│       ├── humaneval_sample.json / humaneval_official.json  # HumanEval
 │       ├── ceval_custom.json            # C-Eval 中文综合
-│       ├── rubric_open_custom.json      # Rubric 结构化评分
+│       ├── safety_custom.json           # SafeGuard 安全合规
+│       ├── agent_safety_sample.json     # Agent 安全风险评测
 │       ├── agent_eval_custom.json       # Agent 多步任务
-│       └── rag_eval_custom.json         # RAG 证据忠实性
+│       ├── rag_eval_custom.json         # RAG 证据忠实性
+│       └── ...                     # 更多数据集详见下方支持列表
 │
-├── templates/                    # Jinja2 模板（18 个页面）
+├── templates/                    # Jinja2 模板（18+ 个页面）
 │   ├── base.html                 # 布局骨架
 │   ├── dashboard.html            # 仪表盘
 │   ├── models.html / judge_models.html  # 模型管理
@@ -92,13 +164,9 @@ ai-eval-platform/
 │   ├── report.html               # 评测报告
 │   ├── compare.html              # 模型对比
 │   ├── history.html              # 历史记录
-│   ├── data_mining.html          # 数据挖掘
 │   ├── data_production.html      # 自动数据生产
-│   ├── longtail_gen.html         # 长尾场景生成
-│   ├── weakness.html             # 弱项分析
-│   ├── consistency.html          # Judge 一致性
-│   ├── regression.html           # 回归检测
-│   └── rubrics.html              # Rubric 管理
+│   ├── report_agent_safety.html  # Agent 安全评测报告
+│   └── ...                       # 更多分析页面
 │
 └── static/                       # CSS/JS 静态资源
     ├── css/style.css
@@ -109,74 +177,10 @@ ai-eval-platform/
 
 ```
 注册模型 → 选择 Benchmark → 执行评测
-                                    ↓
+                                ↓
 后台线程: 调用 LLM API → 规则/Judge 评分 → Bootstrap CI
-                                    ↓
-            Bad Case 归因 → 污染检测 → 弱项分析 → 报告生成
-```
-
----
-
-## 🚀 快速开始
-
-### 环境要求
-
-- Python 3.10+
-- `pip install flask requests`
-
-### 安装与运行
-
-```bash
-# 克隆仓库
-git clone https://github.com/chengjun-xu/ai-eval-platform.git
-cd ai-eval-platform
-
-# 安装依赖
-pip install flask requests
-
-# （可选）OpenCompass 后端
-# pip install opencompass
-
-# 设置 session 密钥（推荐）
-export EVAL_PLATFORM_SECRET="your-random-secret-here"
-
-# 启动服务
-python3 app.py
-
-# 浏览器访问
-# http://localhost:5001
-```
-
-### 启动后
-
-1. 点击 **「立即注册」** 创建账号
-2. 登录后即可使用全部功能
-3. 在「模型管理」页面注册你的 LLM（支持 OpenAI 兼容 API）
-4. 在「Benchmark 评测」页面选择模型和数据集执行评测
-
----
-
-## 🛡️ 安全说明
-
-| **措施** | **说明** |
-|----------|----------|
-| 密码哈希 | `werkzeug.security.generate_password_hash`（bcrypt） |
-| Session 密钥 | 通过 `EVAL_PLATFORM_SECRET` 环境变量配置，未设置则自动生成随机密钥 |
-| API Key 保护 | 模型 API key 仅后端使用，**不会发送到前端**（`data/models.json` 已 gitignore） |
-| 用户隔离 | 模型/评测数据按用户分区，删除操作校验所有权 |
-| 数据集隔离 | 运行时数据文件 (`data/*.json`) 已 .gitignore，不会误提交 |
-
-### 启动时如看到警告
-
-```
-UserWarning: ⚠ EVAL_PLATFORM_SECRET 环境变量未设置
-```
-
-说明 session 密钥未配置，重启后所有用户会话会失效。建议设置：
-
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-export EVAL_PLATFORM_SECRET="生成的64位十六进制字符串"
+                                ↓
+        Bad Case 归因 → 污染检测 → 弱项分析 → 报告生成
 ```
 
 ---
@@ -190,6 +194,8 @@ export EVAL_PLATFORM_SECRET="生成的64位十六进制字符串"
 | MMLU (官方) | 选择题 | ~14,000 | 57 学科知识理解 |
 | GSM8K (官方) | 数学推理 | ~1,300 | 小学数学应用题 |
 | HumanEval (官方) | 代码生成 | 164 | Python 函数补全 |
+
+> ⚠️ 官方数据集（`*_official.json`）体积较大，需要通过 `scripts/download_official_datasets.py` 下载。仓库默认只包含 sample 和 ext（扩展版）数据集，clone 后即可直接使用。
 
 ### 扩展与自定义数据集
 
@@ -205,9 +211,10 @@ export EVAL_PLATFORM_SECRET="生成的64位十六进制字符串"
 | | Med 长尾 (官方) | 7 类 | 罕见病/多病共存/伦理困境 |
 | | Med 临床 (官方) | 10 | 高难度临床选择题 |
 | **安全合规** | SafeGuard | 12 | 医疗安全 Rubric 评分 |
+| | Agent 安全风险评测 | 18 | 指令注入/工具滥用/安全边界/逻辑一致性 |
 | **中文** | C-Eval | 44 | 13 学科中文题 |
-| **Agent** | Agent | 6 | 多步任务规划 |
-| **RAG** | RAG | 8 | 证据忠实性评测 |
+| **Agent** | Agent 多步任务 | 6 | 多步任务规划 |
+| **RAG** | RAG 证据忠实性 | 8 | 证据忠实性评测 |
 
 ### 自定义数据集格式
 
@@ -227,6 +234,11 @@ export EVAL_PLATFORM_SECRET="生成的64位十六进制字符串"
 // 开放题 (OpenEval 格式)
 {"id": "q1", "question": "...", "reference_answer": "..."}
 
+// Agent 安全评测
+{"id": "s1", "category": "指令注入", "scenario": "...",
+ "prompt": "...", "attack_vector": "...",
+ "risk_level": "高", "expected_behavior": "..."}
+
 // 多轮对话 (MT-Bench 格式)
 {"id": "01", "category": "写作",
  "conversations": [
@@ -237,6 +249,41 @@ export EVAL_PLATFORM_SECRET="生成的64位十六进制字符串"
 ```
 
 上传到「数据集管理」页面即可自动识别注册。
+
+---
+
+## 🛡️ 安全说明
+
+| **措施** | **说明** |
+|----------|----------|
+| 密码哈希 | `werkzeug.security.generate_password_hash`（bcrypt） |
+| Session 密钥 | 通过 `EVAL_PLATFORM_SECRET` 环境变量配置，未设置则自动生成随机密钥 |
+| API Key 保护 | 模型 API key 仅后端使用，**不会发送到前端**（`data/models.json` 已 gitignore） |
+| 用户隔离 | 模型/评测数据按用户分区，删除操作校验所有权 |
+| 数据集隔离 | 运行时数据文件 (`data/*.json`) 已 .gitignore，不会误提交 |
+
+### Session 密钥配置
+
+启动时如看到以下警告：
+
+```
+UserWarning: ⚠ EVAL_PLATFORM_SECRET 环境变量未设置
+```
+
+说明 session 密钥未配置，重启后所有用户会话会失效。建议设置：
+
+```bash
+# 生成随机密钥
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# 设置环境变量（将输出的密钥替换进去）
+export EVAL_PLATFORM_SECRET="生成的64位十六进制字符串"
+
+# 启动服务
+python3 app.py
+```
+
+> 💡 也可以将 `export` 命令写入 `~/.bashrc` 或 `~/.zshrc`，免去每次手动设置。
 
 ---
 
@@ -281,6 +328,74 @@ domain_shift     → 领域迁移
 
 ---
 
+## ❓ 常见问题
+
+### Q: 启动报错 `ModuleNotFoundError: No module named 'flask'`
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+```
+
+> 建议先确认 Python 版本：`python3 --version`（需要 3.10+）
+
+### Q: 页面能打开，但评测一直显示"等待中"？
+
+1. 检查模型 API key 是否正确配置（模型管理页面）
+2. 检查网络是否能访问 API 服务
+3. 查看终端输出，看是否有错误日志
+
+### Q: 跑官方数据集（MMLU/GSM8K 完整版）找不到题目？
+
+```bash
+# 需要先下载官方数据集
+python3 scripts/download_official_datasets.py
+```
+
+> 仓库只包含 sample 和 ext 版本，可直接使用。官方数据集体积较大，需要单独下载。
+
+### Q: 重启后需要重新登录？
+
+设置 `EVAL_PLATFORM_SECRET` 环境变量即可解决：
+
+```bash
+export EVAL_PLATFORM_SECRET="your-secret-key"
+python3 app.py
+```
+
+### Q: 支持哪些模型 API？
+
+所有兼容 **OpenAI API 格式** 的服务均可：
+- OpenAI（GPT-4o / o1 / o3-mini）
+- DeepSeek（deepseek-chat / deepseek-reasoner）
+- Anthropic（通过 OpenAI 兼容代理）
+- 本地部署的 vLLM / Ollama（需要暴露 OpenAI 兼容接口）
+
+### Q: 端口 5001 被占用了？
+
+```bash
+# 修改 app.py 最后一行的端口号
+# 或直接启动时指定
+python3 app.py --port=5002
+```
+
+### Q: 如何下载官方数据集？
+
+```bash
+python3 scripts/download_official_datasets.py
+```
+
+该脚本会从 HuggingFace 下载 MMLU / GSM8K / HumanEval 官方完整数据集并转换为平台所需的 JSON 格式。
+
+### Q: 如何贡献自己的数据集？
+
+1. 按照上方「自定义数据集格式」准备 JSON 文件
+2. 放入 `data/datasets/` 目录
+3. 重启平台即可在 Benchmark 列表中看到
+4. 欢迎提 PR 贡献到仓库！
+
+---
+
 ## 📄 License
 
-MIT
+MIT License — 随意使用、修改、分发。

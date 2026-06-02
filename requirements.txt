@@ -1,2 +1,6 @@
+# 核心依赖（必装）
 flask>=3.0
 requests>=2.31
+
+# 可选依赖
+# opencompass  # 解注释以启用 OpenCompass 后端（需要额外安装 opencompass 包）

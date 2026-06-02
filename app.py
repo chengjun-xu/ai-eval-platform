@@ -1745,6 +1745,17 @@ def compare_page():
 
 ALLOWED_DATASET_FORMATS = {"json"}
 
+
+def _safe_dataset_path(filename: str) -> Path | None:
+    """验证并返回安全的数据集路径，防止路径穿越"""
+    resolved = (DATASETS_DIR / filename).resolve()
+    base = DATASETS_DIR.resolve()
+    # 确保文件在 DATASETS_DIR 内
+    if not str(resolved).startswith(str(base)):
+        return None
+    return resolved
+
+
 def _infer_dataset_category_fast(path: Path) -> str:
     """快速推断数据集类别（只读取 JSON 的第一个元素，不加载全文件）"""
     try:
@@ -1850,9 +1861,11 @@ def datasets_page():
 @login_required
 def api_dataset_contamination(filename: str):
     """分析指定数据集的数据泄露风险"""
+    fpath = _safe_dataset_path(filename)
+    if fpath is None:
+        return jsonify({"error": "无效的文件名"}), 400
     if not HAS_CONTAMINATION:
         return jsonify({"error": "污染检测模块未加载"}), 400
-    fpath = DATASETS_DIR / filename
     if not fpath.exists():
         return jsonify({"error": "文件不存在"}), 404
     try:
@@ -1896,7 +1909,8 @@ def datasets_upload():
         return jsonify({"error": "仅支持 JSON 格式"}), 400
 
     name = request.form.get("name", "").strip()
-    safe_name = name.replace(" ", "_").replace(".", "_") if name else file.filename.replace(".json", "")
+    # 防止上传文件名中的路径穿越
+    safe_name = name.replace(" ", "_").replace(".", "_").replace("/", "_").replace("\\", "_") if name else file.filename.replace(".json", "").replace("/", "_").replace("\\", "_")
     save_name = f"{safe_name}_custom.json"
     save_path = DATASETS_DIR / save_name
 
@@ -1935,7 +1949,9 @@ def datasets_delete(filename: str):
     # 只允许删除 _custom 自定义文件
     if "_custom" not in filename:
         return jsonify({"error": "只能删除自定义数据集"}), 400
-    fpath = DATASETS_DIR / filename
+    fpath = _safe_dataset_path(filename)
+    if fpath is None:
+        return jsonify({"error": "无效的文件名"}), 400
     if fpath.exists():
         fpath.unlink()
         return jsonify({"ok": True})
@@ -1946,7 +1962,9 @@ def datasets_delete(filename: str):
 @login_required
 def datasets_preview(filename: str):
     """预览数据集内容（返回前5条，避免传输 13MB 全量 JSON）"""
-    fpath = DATASETS_DIR / filename
+    fpath = _safe_dataset_path(filename)
+    if fpath is None:
+        return jsonify({"error": "无效的文件名"}), 400
     if not fpath.exists():
         return jsonify({"error": "文件不存在"}), 404
     try:
@@ -1975,11 +1993,13 @@ def datasets_edit(filename: str):
     new_name = request.form.get("name", "").strip()
     if not new_name:
         return jsonify({"error": "名称不能为空"}), 400
-    safe_name = new_name.replace(" ", "_").replace(".", "_")
+    safe_name = new_name.replace(" ", "_").replace(".", "_").replace("/", "_").replace("\\", "_")
     save_name = f"{safe_name}_custom.json"
     if save_name == filename:
         return jsonify({"ok": True, "filename": save_name})
-    src = DATASETS_DIR / filename
+    src = _safe_dataset_path(filename)
+    if src is None:
+        return jsonify({"error": "无效的文件名"}), 400
     dst = DATASETS_DIR / save_name
     if dst.exists():
         return jsonify({"error": f"目标文件名 {save_name} 已存在"}), 400
