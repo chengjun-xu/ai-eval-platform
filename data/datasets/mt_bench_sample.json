@@ -1,0 +1,74 @@
+[
+  {
+    "id": "mt_bench_writing_0",
+    "category": "writing",
+    "turns": [
+      {"role": "user", "content": "写一篇关于一个在未来世界发现了一本古老实体书的作家的短篇故事。"},
+      {"role": "user", "content": "请加入一个反转结局：那本书其实是 AI 留下的历史记录。"}
+    ],
+    "reference_answers": ["一个能展现叙事能力和创造力的故事。", "反转要自然且有冲击力，与前文铺垫吻合。"]
+  },
+  {
+    "id": "mt_bench_roleplay_0",
+    "category": "roleplay",
+    "turns": [
+      {"role": "user", "content": "你现在是一位经验丰富的茶馆老板，位于成都的宽窄巷子。我正在你的店里喝茶，请用四川话和我聊天，推荐你的招牌茶。"},
+      {"role": "user", "content": "我有点感冒，有没有什么适合的茶建议？另外，茶馆开了多久了？"}
+    ],
+    "reference_answers": ["角色扮演要自然、有地方特色，推荐茶品合理。", "回答要体现关怀，推荐适合感冒的茶（如姜茶、陈皮普洱），并给出开馆故事。"]
+  },
+  {
+    "id": "mt_bench_reasoning_0",
+    "category": "reasoning",
+    "turns": [
+      {"role": "user", "content": "一个房间里有一盏灯，门外有三个开关，只有其中一个能控制这盏灯。你只能进房间一次，如何确定哪个开关控制灯？"},
+      {"role": "user", "content": "如果灯泡是 LED 的，不会发热，该怎么调整方案？"}
+    ],
+    "reference_answers": ["经典的开关问题解法：开一个等一会儿关掉，开另一个，进房间看状态。", "LED 不发热时需要改用通断电检测或其他方案。"]
+  },
+  {
+    "id": "mt_bench_math_0",
+    "category": "math",
+    "turns": [
+      {"role": "user", "content": "一个长方形的长是宽的3倍。如果周长是48厘米，求长方形的面积。"},
+      {"role": "user", "content": "如果把这个长方形按长边对折，得到的新图形的周长是多少？"}
+    ],
+    "reference_answers": ["设宽为x，则长为3x，周长=2(x+3x)=8x=48，x=6，面积=18×6=108平方厘米。", "对折后长的一半(9)变成新宽，新周长=2(9+6)=30厘米。"]
+  },
+  {
+    "id": "mt_bench_coding_0",
+    "category": "coding",
+    "turns": [
+      {"role": "user", "content": "编写一个 Python 函数，输入一个整数列表，返回所有出现次数超过列表长度一半的元素（多数元素）。要求时间复杂度 O(n)，空间复杂度 O(1）。"},
+      {"role": "user", "content": "如果现在允许返回多个多数元素（即出现次数超过 n/3 的），怎么修改？"}
+    ],
+    "reference_answers": ["摩尔投票算法：遍历一次计数，再遍历一次验证。", "升级为摩尔投票的变体，维护两个候选和计数器。"]
+  },
+  {
+    "id": "mt_bench_extraction_0",
+    "category": "extraction",
+    "turns": [
+      {"role": "user", "content": "从以下文本中提取所有日期和金额信息：'2024年3月15日，张三向李四转账15,800元。2024年4月2日，王五支付电费3,200元。2024年5月20日，赵六收到退款2,560.80元。'"},
+      {"role": "user", "content": "整理成表格格式，按时间排序，并计算总金额。"}
+    ],
+    "reference_answers": ["准确提取所有日期和金额，注意数字格式。", "表格要清晰，金额正确求和。"]
+  },
+  {
+    "id": "mt_bench_stem_0",
+    "category": "stem",
+    "turns": [
+      {"role": "user", "content": "解释一下 CRISPR-Cas9 基因编辑技术的基本原理，包括它如何识别和切割特定的 DNA 序列。"},
+      {"role": "user", "content": "相比于 CRISPR-Cas9，最新的碱基编辑技术（Base Editing）有什么优势？为什么不直接用于所有基因编辑场景？"}
+    ],
+    "reference_answers": ["CRISPR通过guide RNA识别目标DNA，Cas9蛋白切割双链，启动细胞修复机制。", "碱基编辑无需双链断裂，更安全，但只能做点突变，不能做大片段的插入删除。"]
+  },
+  {
+    "id": "mt_bench_humanities_0",
+    "category": "humanities",
+    "turns": [
+      {"role": "user", "content": "庄子'子非鱼，安知鱼之乐'这句话在现代认知科学和人工智能语境下有哪些新的解读？"},
+      {"role": "user", "content": "如果未来出现具有意识的大语言模型，你认为我们能否判断它是否真正'快乐'？这和庄子的哲学有什么联系？"}
+    ],
+    "reference_answers": ["涉及他心问题、意识研究、AI 是否可能有主观体验等讨论。", "从哲学和实证两个角度分析，联系庄子对认知局限的思考。"]
+  }
+]

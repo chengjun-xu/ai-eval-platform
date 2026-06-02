@@ -5,12 +5,25 @@
 <div class="page-header">
   <div>
     <h2>模型管理</h2>
-    <p>注册你要评测的模型，支持 OpenAI 兼容 API</p>
+    <p>注册你要评测的模型，支持 OpenAI 兼容 API 和本地 Ollama 模型</p>
   </div>
 </div>
 
 <div class="row">
-  <!-- 添加模型表单 -->
+  <!-- 快速添加 Ollama 本地模型 — 紧凑栏 -->
+  <div id="ollama-bar" style="grid-column:1/-1;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:0.6rem 1rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
+    <span style="font-size:1.1rem">🦙</span>
+    <span id="ollama-status-text" style="color:var(--text-muted);font-size:0.85rem">正在检测 Ollama...</span>
+    <div id="ollama-model-chips" style="display:none;flex:1;flex-wrap:wrap;gap:0.35rem"></div>
+    <div id="ollama-offline-hint" style="display:none;color:var(--text-muted);font-size:0.8rem">
+      未检测到 Ollama — <code style="font-size:0.8rem">brew install ollama && ollama serve</code>
+    </div>
+    <div id="ollama-empty-hint" style="display:none;color:var(--text-muted);font-size:0.8rem">
+      Ollama 在运行，还没有模型 — 终端执行 <code style="font-size:0.8rem">ollama pull llama3.2</code>
+    </div>
+  </div>
+
+  <!-- 添加模型表单（手动） -->
   <div class="card">
     <div class="card-header">
       <h3>添加模型</h3>
@@ -140,6 +153,68 @@
 {% block scripts %}
 <script>
 var currentEditId = '';
+
+// ── Ollama 自动检测 ──
+(function() {
+  fetch('/api/ollama/models')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var statusText = document.getElementById('ollama-status-text');
+      var chips = document.getElementById('ollama-model-chips');
+      var offline = document.getElementById('ollama-offline-hint');
+      var empty = document.getElementById('ollama-empty-hint');
+
+      if (data.online && data.models && data.models.length > 0) {
+        statusText.textContent = 'Ollama 运行中，点击模型一键添加 →';
+        statusText.style.color = 'var(--text-secondary)';
+        chips.style.display = 'flex';
+        data.models.forEach(function(m) {
+          var chip = document.createElement('span');
+          chip.textContent = m;
+          chip.style.cssText = 'background:var(--bg-input);border:1px solid var(--border);border-radius:20px;padding:0.15rem 0.65rem;cursor:pointer;color:var(--text-muted);font-size:0.8rem;white-space:nowrap;transition:all 0.15s';
+          chip.onmouseover = function() { this.style.borderColor = 'var(--accent)'; this.style.color = 'var(--accent)'; };
+          chip.onmouseout = function() { this.style.borderColor = 'var(--border)'; this.style.color = 'var(--text-muted)'; };
+          chip.onclick = function() { addOllamaModel(m, chip); };
+          chips.appendChild(chip);
+        });
+      } else if (data.online && data.models && data.models.length === 0) {
+        statusText.style.display = 'none';
+        empty.style.display = 'inline';
+      } else {
+        statusText.style.display = 'none';
+        offline.style.display = 'inline';
+      }
+    })
+    .catch(function() {
+      document.getElementById('ollama-status-text').textContent = 'Ollama 未运行';
+      document.getElementById('ollama-offline-hint').style.display = 'inline';
+    });
+})();
+
+function addOllamaModel(modelName, chip) {
+  chip.textContent = '添加中...';
+  chip.style.pointerEvents = 'none';
+  chip.style.opacity = '0.5';
+  fetch('/api/ollama/add/' + encodeURIComponent(modelName), { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        chip.textContent = '✅ ' + modelName;
+        chip.style.borderColor = '#22c55e';
+        chip.style.color = '#22c55e';
+        setTimeout(function() { location.reload(); }, 800);
+      } else {
+        chip.textContent = '❌ ' + (data.error || '失败');
+        chip.style.pointerEvents = 'auto';
+        chip.style.opacity = '1';
+      }
+    })
+    .catch(function() {
+      chip.textContent = '❌ 网络错误';
+      chip.style.pointerEvents = 'auto';
+      chip.style.opacity = '1';
+    });
+}
 
 function editModel(modelId) {
   // 从已有数据中查找

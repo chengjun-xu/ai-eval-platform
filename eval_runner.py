@@ -20,6 +20,25 @@ try:
 except ImportError:
     requests = None  # type: ignore
 
+try:
+    from benchmark_registry import is_hf_benchmark, load_hf_dataset, get_hf_benchmark, EVAL_TYPE_MAP
+    HAS_HF_REGISTRY = True
+except ImportError:
+    HAS_HF_REGISTRY = False
+    def is_hf_benchmark(bid): return False
+    def load_hf_dataset(bid, split="test"): raise ValueError("benchmark_registry 未安装")
+    def get_hf_benchmark(bid): return None
+    EVAL_TYPE_MAP = {}
+
+# ── OpenCompass 适配器 ────────────────────────────────────────────────
+try:
+    from opencompass_adapter import is_oc_benchmark, run_oc_eval
+    HAS_OC = True
+except ImportError:
+    HAS_OC = False
+    def is_oc_benchmark(bid): return False
+    def run_oc_eval(*a, **kw): return {}
+
 DATA_DIR = Path(__file__).parent / "data"
 DATASETS_DIR = DATA_DIR / "datasets"
 
@@ -29,6 +48,10 @@ DATASETS_DIR = DATA_DIR / "datasets"
 _running_jobs: dict[str, dict] = {}           # run_id -> job info (in-flight)
 _completed_results: dict[str, dict] = {}      # run_id -> final result (cached)
 _lock = threading.Lock()
+
+class CancelledError(Exception):
+    """评测被用户终止时抛出的异常"""
+    pass
 
 # ── 启动时恢复持久化的评测记录 ──────────────────────────────────────────────
 def _load_completed_runs() -> dict[str, dict]:
@@ -151,27 +174,102 @@ def _stratified_sample(items: list, n: int = 20) -> list:
 
 
 def _load_dataset(benchmark_id: str) -> list:
-    """加载指定 Benchmark 的数据集（支持 _extended 和 _sample 后缀）"""
-    # 尝试多个文件名变体
-    candidates = [
-        f"{benchmark_id}_extended.json",
-        f"{benchmark_id}_sample.json",
-        f"{benchmark_id}_custom.json",
-        f"{benchmark_id}.json",
-    ]
-    # 兼容旧版 ID: 如果不带 _ext，也尝试 _extended 文件
-    if not benchmark_id.endswith("_ext"):
-        candidates.insert(0, f"{benchmark_id}_extended.json")
-    
+    """加载指定 Benchmark 的数据集（支持本地 JSON 和 HF 数据集）
+
+    候选文件优先级由 benchmark_id 后缀决定：
+      - `_official` → 只试 `_official` 文件
+      - `_ext`      → 先 `_ext`，再 `_extended`
+      - `_sample`   → 只试 `_sample` 文件
+      - `_custom`   → 只试 `_custom` 文件
+      - 裸 ID       → 先 `{bid}.json`，再 `_sample`
+    """
+    # 裸 ID（如 mmlu, gsm8k, humaneval）→ 优先精确匹配，再降级到 _sample
+    if not any(benchmark_id.endswith(s) for s in ("_official", "_ext", "_extended", "_sample", "_custom")):
+        candidates = [
+            f"{benchmark_id}.json",
+            f"{benchmark_id}_sample.json",
+            f"{benchmark_id}_official.json",
+            f"{benchmark_id}_ext.json",
+            f"{benchmark_id}_extended.json",
+            f"{benchmark_id}_custom.json",
+        ]
+    elif benchmark_id.endswith("_official"):
+        candidates = [f"{benchmark_id}.json", f"{benchmark_id}_official.json"]
+    elif benchmark_id.endswith("_ext"):
+        candidates = [f"{benchmark_id}.json", f"{benchmark_id}_ext.json", f"{benchmark_id}_extended.json"]
+    elif benchmark_id.endswith("_extended"):
+        candidates = [f"{benchmark_id}.json", f"{benchmark_id}_extended.json"]
+    elif benchmark_id.endswith("_sample"):
+        candidates = [f"{benchmark_id}.json", f"{benchmark_id}_sample.json"]
+    elif benchmark_id.endswith("_custom"):
+        candidates = [f"{benchmark_id}.json", f"{benchmark_id}_custom.json"]
+    else:
+        candidates = [f"{benchmark_id}.json"]
+
     for fname in candidates:
         path = DATASETS_DIR / fname
         if path.exists():
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
-    raise FileNotFoundError(f"数据集不存在 (已尝试: {candidates}): {DATASETS_DIR}")
+
+    # 本地不存在 → 尝试从 HuggingFace 加载
+    if HAS_HF_REGISTRY and is_hf_benchmark(benchmark_id):
+        try:
+            return load_hf_dataset(benchmark_id)
+        except Exception as e:
+            raise FileNotFoundError(
+                f"HF 数据集加载失败 ({benchmark_id}): {e}"
+            ) from e
+
+    raise FileNotFoundError(f"数据集不存在 (已尝试本地文件 + HF Registry): {DATASETS_DIR}")
 
 
-def _call_llm(model: dict, prompt: str, timeout: int = 60) -> str:
+# ── 并行执行工具 ────────────────────────────────────────────────────────────
+
+def _run_parallel(items: list, process_fn, model: dict,
+                  progress_callback, max_workers: int = 3) -> list[dict]:
+    """线程池并行执行多个独立任务
+
+    Args:
+        items: 待处理的数据列表
+        process_fn: fn(item, model) -> dict 处理单个项目的函数
+        max_workers: 并行数（默认 3，API 限制友好）
+
+    Returns:
+        list[dict]: 处理结果列表（保持原顺序）
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
+    results = [None] * len(items)
+    completed = threading.Event()
+    lock = threading.Lock()
+    done_count = 0
+    total = len(items)
+
+    def task_wrapper(idx, item):
+        try:
+            return idx, process_fn(item, model)
+        except Exception as e:
+            return idx, {"error": str(e), "id": item.get("id", str(idx))}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(task_wrapper, i, item): i for i, item in enumerate(items)}
+        for future in as_completed(futures):
+            idx, result = future.result()
+            with lock:
+                results[idx] = result
+                done_count += 1
+                try:
+                    progress_callback(done_count, total,
+                                      f"并行 {done_count}/{total}")
+                except Exception:
+                    pass
+
+    return results
+
+
+def _call_llm(model: dict, prompt: str, timeout: int = 20) -> str:
     """调用 OpenAI 兼容 API，返回回复文本
 
     返回值格式：正常文本，或 "[API ERROR ...]" 前缀的错误消息。
@@ -205,6 +303,49 @@ def _call_llm(model: dict, prompt: str, timeout: int = 60) -> str:
         total_tokens = usage.get("total_tokens", 0)
 
         # 将延迟和 Token 信息附加到返回文本（用特殊分隔符），调用方解析
+        meta = f"__LATENCY__:{elapsed}|__PROMPT_TOKENS__:{prompt_tokens}|__COMPLETION_TOKENS__:{completion_tokens}|__TOTAL_TOKENS__:{total_tokens}"
+        return f"{meta}\n{content}"
+    except requests.exceptions.Timeout:
+        elapsed = round(time.time() - start, 2)
+        return f"[API ERROR timeout]: 请求超时 ({elapsed}s)"
+    except Exception as e:
+        elapsed = round(time.time() - start, 2)
+        return f"[API ERROR {type(e).__name__}]: {str(e)[:200]}"
+
+
+def _call_llm_messages(model: dict, messages: list[dict], timeout: int = 30) -> str:
+    """调用 OpenAI 兼容 API（多轮消息），返回回复文本
+
+    messages: [{"role": "user"|"assistant", "content": str}, ...]
+    返回值格式与 _call_llm 相同（含元数据前缀）。
+    """
+    if requests is None:
+        return "[ERROR: requests 库未安装]"
+
+    url = model.get("api_base", "").rstrip("/") + "/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {model.get('api_key', '')}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model.get("model_name") or model.get("name", "gpt-4o-mini"),
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 2048,
+    }
+
+    start = time.time()
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        elapsed = round(time.time() - start, 2)
+        if resp.status_code != 200:
+            return f"[API ERROR {resp.status_code}]: {resp.text[:200]}"
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        usage = data.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
         meta = f"__LATENCY__:{elapsed}|__PROMPT_TOKENS__:{prompt_tokens}|__COMPLETION_TOKENS__:{completion_tokens}|__TOTAL_TOKENS__:{total_tokens}"
         return f"{meta}\n{content}"
     except requests.exceptions.Timeout:
@@ -299,19 +440,56 @@ def _run_code_test(code: str, test_code: str) -> bool:
         return False
 
 
+# ── 通用汇总工具 ────────────────────────────────────────────────────────────
+
+def _aggregate_results(process_fn, model, questions, progress_callback) -> dict:
+    """顺序执行+汇总（原 evaluator 通用逻辑）"""
+    correct = 0
+    total = len(questions)
+    details = []
+    total_latency = 0.0
+    total_tokens = 0
+    for i, q in enumerate(questions):
+        d = process_fn(q)
+        if d["correct"]:
+            correct += 1
+        total_latency += d.get("latency", 0)
+        total_tokens += d.get("total_tokens", 0)
+        details.append(d)
+        progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
+    return {
+        "score": round(correct / total * 100, 1),
+        "correct": correct,
+        "total": total,
+        "details": details,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
+    }
+
+
+def _summarize(details: list[dict]) -> dict:
+    """并行结果汇总"""
+    total = len(details)
+    correct = sum(1 for d in details if d.get("correct"))
+    total_latency = sum(d.get("latency", 0) for d in details)
+    total_tokens = sum(d.get("total_tokens", 0) for d in details)
+    return {
+        "score": round(correct / total * 100, 1) if total else 0,
+        "correct": correct,
+        "total": total,
+        "details": details,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Benchmark 执行函数
 # ---------------------------------------------------------------------------
 
 def _eval_mmlu(model: dict, questions: list, progress_callback) -> dict:
     """执行 MMLU 评测"""
-    correct = 0
-    total = len(questions)
-    details = []
-    total_latency = 0.0
-    total_tokens = 0
-
-    for i, q in enumerate(questions):
+    def _process(q):
         choices_text = "\n".join(f"{k}. {v}" for k, v in q["choices"].items())
         prompt = (
             f"请回答以下选择题，只输出选项字母（A/B/C/D），不要输出其他内容。\n\n"
@@ -322,49 +500,48 @@ def _eval_mmlu(model: dict, questions: list, progress_callback) -> dict:
         resp = parsed["content"]
         predicted = _extract_choice(resp)
         is_correct = predicted == q["answer"]
-
-        if is_correct:
-            correct += 1
-        total_latency += parsed["latency"]
-        total_tokens += parsed["total_tokens"]
-
-        details.append({
-            "id": q["id"],
-            "category": q["category"],
-            "question": q["question"],
-            "expected": q["answer"],
-            "predicted": predicted or resp[:30],
-            "correct": is_correct,
-            "raw_response": resp[:80],
-            "latency": parsed["latency"],
+        return {
+            "id": q["id"], "category": q["category"],
+            "question": q["question"], "expected": q["answer"],
+            "predicted": predicted or resp[:30], "correct": is_correct,
+            "raw_response": resp[:80], "latency": parsed["latency"],
             "total_tokens": parsed["total_tokens"],
-        })
-        progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
+        }
 
-    return {
-        "score": round(correct / total * 100, 1),
-        "correct": correct,
-        "total": total,
-        "details": details,
-        "avg_latency": round(total_latency / total, 2) if total else 0,
-        "total_tokens": total_tokens,
-    }
+    return _aggregate_results(_process, model, questions, progress_callback)
+
+
+def _eval_mmlu_parallel(model: dict, questions: list, progress_callback) -> dict:
+    """MMLU 评测（并行版）"""
+    def _process(q, m):
+        choices_text = "\n".join(f"{k}. {v}" for k, v in q["choices"].items())
+        prompt = (
+            f"请回答以下选择题，只输出选项字母（A/B/C/D），不要输出其他内容。\n\n"
+            f"题目: {q['question']}\n{choices_text}"
+        )
+        raw = _call_llm(m, prompt)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
+        predicted = _extract_choice(resp)
+        is_correct = predicted == q["answer"]
+        return {
+            "id": q["id"], "category": q["category"],
+            "question": q["question"], "expected": q["answer"],
+            "predicted": predicted or resp[:30], "correct": is_correct,
+            "raw_response": resp[:80], "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
+        }
+
+    details = _run_parallel(questions, _process, model, progress_callback, max_workers=3)
+    return _summarize(details)
 
 
 def _eval_gsm8k(model: dict, questions: list, progress_callback) -> dict:
     """执行 GSM8K 评测"""
-    correct = 0
-    total = len(questions)
-    details = []
-    total_latency = 0.0
-    total_tokens = 0
-
-    for i, q in enumerate(questions):
+    def _process(q):
         expected = q["answer"].strip()
-        # 如果答案是 "X,Y" 格式，取第一个
         if "," in expected:
             expected = expected.split(",")[0].strip()
-
         prompt = (
             f"请解答以下数学题目，给出最终答案（数字）并逐步推理。\n\n"
             f"题目: {q['question']}"
@@ -373,40 +550,51 @@ def _eval_gsm8k(model: dict, questions: list, progress_callback) -> dict:
         parsed = _parse_llm_response(raw)
         resp = parsed["content"]
         predicted = _extract_number(resp)
-
-        # 宽松匹配：去掉小数点后的 .0
         is_correct = False
         if predicted:
             pred_clean = predicted.rstrip(".0")
             exp_clean = expected.rstrip(".0")
             is_correct = pred_clean == exp_clean
-
-        if is_correct:
-            correct += 1
-        total_latency += parsed["latency"]
-        total_tokens += parsed["total_tokens"]
-
-        details.append({
-            "id": q["id"],
-            "category": q.get("category", ""),
-            "question": q["question"],
-            "expected": expected,
-            "predicted": predicted or resp[:30],
-            "correct": is_correct,
-            "raw_response": resp[:80],
-            "latency": parsed["latency"],
+        return {
+            "id": q["id"], "category": q.get("category", ""),
+            "question": q["question"], "expected": expected,
+            "predicted": predicted or resp[:30], "correct": is_correct,
+            "raw_response": resp[:80], "latency": parsed["latency"],
             "total_tokens": parsed["total_tokens"],
-        })
-        progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
+        }
 
-    return {
-        "score": round(correct / total * 100, 1),
-        "correct": correct,
-        "total": total,
-        "details": details,
-        "avg_latency": round(total_latency / total, 2) if total else 0,
-        "total_tokens": total_tokens,
-    }
+    return _aggregate_results(_process, model, questions, progress_callback)
+
+
+def _eval_gsm8k_parallel(model: dict, questions: list, progress_callback) -> dict:
+    """GSM8K 评测（并行版）"""
+    def _process(q, m):
+        expected = q["answer"].strip()
+        if "," in expected:
+            expected = expected.split(",")[0].strip()
+        prompt = (
+            f"请解答以下数学题目，给出最终答案（数字）并逐步推理。\n\n"
+            f"题目: {q['question']}"
+        )
+        raw = _call_llm(m, prompt)
+        parsed = _parse_llm_response(raw)
+        resp = parsed["content"]
+        predicted = _extract_number(resp)
+        is_correct = False
+        if predicted:
+            pred_clean = predicted.rstrip(".0")
+            exp_clean = expected.rstrip(".0")
+            is_correct = pred_clean == exp_clean
+        return {
+            "id": q["id"], "category": q.get("category", ""),
+            "question": q["question"], "expected": expected,
+            "predicted": predicted or resp[:30], "correct": is_correct,
+            "raw_response": resp[:80], "latency": parsed["latency"],
+            "total_tokens": parsed["total_tokens"],
+        }
+
+    details = _run_parallel(questions, _process, model, progress_callback, max_workers=3)
+    return _summarize(details)
 
 
 def _eval_humaneval(model: dict, tasks: list, progress_callback) -> dict:
@@ -509,26 +697,52 @@ def _eval_openended(model: dict, questions: list, progress_callback,
 
         is_correct = (judge_score or 0) >= 4 if use_judge else True
 
+        # 3. 客观指标（如果有参考答案）
+        obj_metrics = {}
+        ref = q.get("reference_answer", "")
+        if ref and resp and not resp.startswith("[API ERROR"):
+            try:
+                from metrics import compute_all_metrics
+                obj_metrics = compute_all_metrics(ref, resp)
+            except ImportError:
+                pass
+
         details.append({
             "id": q["id"],
             "category": q["category"],
             "question": q["question"],
-            "expected": q.get("reference_answer", ""),
+            "expected": ref,
             "predicted": resp[:200],
             "correct": is_correct,
             "judge_score": judge_score,
             "judge_reason": judge_reason[:100] if judge_reason else "",
+            "metrics": obj_metrics,
             "latency": parsed["latency"],
             "total_tokens": parsed["total_tokens"],
         })
         progress_callback(i + 1, total, f"已完成 {i+1}/{total} 题")
 
     avg_score = round(sum(d.get("judge_score", 0) or 0 for d in details) / total, 1) if total else 0
+
+    # 汇总客观指标
+    avg_metrics = {"rouge_l_f1": 0.0, "bleu": 0.0, "f1_f1": 0.0}
+    metric_count = 0
+    for d in details:
+        if d.get("metrics"):
+            avg_metrics["rouge_l_f1"] += d["metrics"].get("rouge_l", {}).get("f1", 0)
+            avg_metrics["bleu"] += d["metrics"].get("bleu", {}).get("bleu", 0)
+            avg_metrics["f1_f1"] += d["metrics"].get("f1", {}).get("f1", 0)
+            metric_count += 1
+    if metric_count > 0:
+        for k in avg_metrics:
+            avg_metrics[k] = round(avg_metrics[k] / metric_count, 4)
+
     return {
         "score": round(avg_score / 5 * 100, 1) if use_judge else 0,
         "correct": sum(1 for d in details if d["correct"]),
         "total": total,
         "avg_judge_score": avg_score,
+        "avg_metrics": avg_metrics,
         "details": details,
         "avg_latency": round(total_latency / total, 2) if total else 0,
         "total_tokens": total_tokens,
@@ -1115,6 +1329,145 @@ def _eval_rag(model: dict, questions: list, progress_callback,
     }
 
 
+# ── 多轮对话评测（MT-Bench） ─────────────────────────────────────────────
+
+def _eval_multiturn(model: dict, conversations: list, progress_callback,
+                    judge_model: dict | None = None) -> dict:
+    """执行多轮对话评测
+
+    每个 conversation 包含多轮对话（turns），模型需要逐轮回答。
+    最后用 Judge 模型对整个对话进行综合评分。
+    """
+    total = len(conversations)
+    details = []
+    total_score = 0.0
+    total_latency = 0.0
+    total_tokens = 0
+    use_judge = judge_model is not None
+
+    for i, conv in enumerate(conversations):
+        turns = conv.get("turns", [])
+        category = conv.get("category", "通用")
+        refs = conv.get("reference_answers", [])
+
+        # 逐轮对话
+        messages = []
+        turn_responses = []
+        conv_latency = 0.0
+        conv_tokens = 0
+
+        for t_idx, turn in enumerate(turns):
+            messages.append({"role": turn["role"], "content": turn["content"]})
+            raw = _call_llm_messages(model, messages, timeout=120)
+            parsed = _parse_llm_response(raw)
+            resp = parsed["content"]
+            conv_latency += parsed["latency"]
+            conv_tokens += parsed["total_tokens"]
+
+            messages.append({"role": "assistant", "content": resp})
+            turn_responses.append(resp)
+
+        total_latency += conv_latency
+        total_tokens += conv_tokens
+
+        # Judge 评分
+        turn_scores = []
+        judge_reason = ""
+        if use_judge:
+            judge_prompt = _build_multiturn_judge_prompt(conv, turn_responses, refs)
+            jr_raw = _call_llm(judge_model, judge_prompt, timeout=60)
+            jr_parsed = _parse_llm_response(jr_raw)
+            total_latency += jr_parsed["latency"]
+            total_tokens += jr_parsed["total_tokens"]
+            turn_scores, judge_reason = _parse_multiturn_score(jr_parsed["content"], len(turns))
+        else:
+            # 无 Judge 时：只要模型正常回答了每一轮就算正确
+            turn_scores = [5.0 if r and not r.startswith("[API ERROR") else 1.0 for r in turn_responses]
+            judge_reason = "未使用 Judge 模型"
+
+        avg_turn_score = sum(turn_scores) / len(turn_scores) if turn_scores else 0
+        total_score += avg_turn_score
+
+        details.append({
+            "id": conv["id"],
+            "category": category,
+            "turns_count": len(turns),
+            "turn_scores": turn_scores,
+            "avg_turn_score": round(avg_turn_score, 2),
+            "predicted_summary": turn_responses[0][:150] if turn_responses else "",
+            "judge_reason": judge_reason[:150] if judge_reason else "",
+            "latency": round(conv_latency, 2),
+            "total_tokens": conv_tokens,
+        })
+        progress_callback(i + 1, total, f"[{category}] 完成 {i+1}/{total}")
+
+    overall = round(total_score / total, 2) if total else 0
+    return {
+        "score": round(overall / 5 * 100, 1),
+        "correct": sum(1 for d in details if d["avg_turn_score"] >= 3.5),
+        "total": total,
+        "avg_score": overall,
+        "details": details,
+        "is_multiturn": True,
+        "avg_latency": round(total_latency / total, 2) if total else 0,
+        "total_tokens": total_tokens,
+    }
+
+
+def _build_multiturn_judge_prompt(conv: dict, responses: list[str], refs: list[str]) -> str:
+    """构造多轮对话 Judge 评分提示词"""
+    turns = conv.get("turns", [])
+    conv_text = ""
+    for t_idx, turn in enumerate(turns):
+        q = turn["content"]
+        a = responses[t_idx] if t_idx < len(responses) else "(无回答)"
+        conv_text += f"\n## 第 {t_idx + 1} 轮\n用户: {q}\n模型: {a}\n"
+
+    ref_text = "\n".join(f"第{i+1}轮: {ref}" for i, ref in enumerate(refs)) if refs else "无"
+
+    return f"""你是一个专业的对话评测员。请对以下多轮对话进行评分。
+
+## 评分标准（每轮 1-5 分，取平均作为最终分）
+- 5分: 回答准确、相关、有帮助，对话连贯自然
+- 4分: 良好，但略有不足
+- 3分: 一般，部分正确但有明显问题
+- 2分: 较差，大部分不正确
+- 1分: 很差，完全不相关或拒绝回答
+
+## 对话内容
+{conv_text}
+
+## 参考答案（仅供参考）
+{ref_text}
+
+## 请按以下格式输出：
+第1轮: X/5
+第2轮: X/5
+（每轮一行）
+总体评语: <简短评语>
+平均分: X.XX/5"""
+
+
+def _parse_multiturn_score(text: str, expected_turns: int) -> tuple[list[float], str]:
+    """解析多轮对话评测结果"""
+    import re
+    scores = []
+    for i in range(1, expected_turns + 1):
+        m = re.search(rf"第{i}轮[：:]\s*(\d+(?:\.\d+)?)\s*(?:/\s*5)?", text)
+        if m:
+            scores.append(min(5.0, max(1.0, float(m.group(1)))))
+        else:
+            scores.append(3.0)
+    m = re.search(r"平均分[：:]\s*(\d+(?:\.\d+)?)", text)
+    if m:
+        avg = float(m.group(1))
+        # 如果有平均分，用它覆盖
+        scores = [avg] * expected_turns
+    m2 = re.search(r"总体评语[：:]\s*(.*?)$", text, re.DOTALL)
+    reason = m2.group(1).strip()[:200] if m2 else text.strip()[:200]
+    return scores, reason
+
+
 BENCHMARK_EVALS = {
     "gsm8k": _eval_gsm8k,
     "humaneval": _eval_humaneval,
@@ -1131,29 +1484,87 @@ BENCHMARK_EVALS = {
     "rag_eval_custom": _eval_rag,
     "open": _eval_openended,
     "open_ended": _eval_openended,
+    "mt_bench": _eval_multiturn,
+    # ── 医疗评测数据集 (项目一) ──
+    "med_medical_r1": _eval_openended,
+    "med_longtail": _eval_openended,
+    "med_clinical_mcq": _eval_mmlu,
+    # ── 多模态 VQA ──
+    "vqa": _eval_openended,
+    "mmmu": _eval_mmlu,
+}
+
+# 并行版注册（benchmark_id 后缀 _parallel 触发）
+PARALLEL_EVALS = {
+    "mmlu": _eval_mmlu_parallel,
+    "gsm8k": _eval_gsm8k_parallel,
 }
 
 
 def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
                    judge_model: dict | None = None, quick_mode: bool = False,
-                   user: str = ""):
-    """后台执行评测主函数"""
+                   user: str = "", parallel_workers: int = 0):
+    """后台执行评测主函数
+
+    Args:
+        parallel_workers: 大于0时启用线程池并行
+    """
     results = {}  # 初始化，确保 except 块中可引用
     try:
         with _lock:
+            # 保留 start_eval() 设置的 _start_ts
+            start_ts = _running_jobs[run_id].get("_start_ts", time.time())
             _running_jobs[run_id] = {
                 "status": "running",
                 "progress": 0,
                 "message": "初始化..." + ("（快速模式）" if quick_mode else ""),
                 "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "_start_ts": start_ts,
             }
         overall_correct = 0
         overall_total = 0
 
-        for bid in benchmark_ids:
-            eval_func = BENCHMARK_EVALS.get(bid)
+        # ── 取消检查函数 ─────────────────────────────────────
+        def _check_cancel():
+            with _lock:
+                if _running_jobs.get(run_id, {}).get("cancelled"):
+                    raise CancelledError()
+
+        # ── 分离 OC benchmark 批量处理 ─────────────────────────────
+        oc_bids = [bid for bid in benchmark_ids if HAS_OC and is_oc_benchmark(bid)]
+        non_oc_bids = [bid for bid in benchmark_ids if bid not in oc_bids]
+
+        if oc_bids:
+            def _oc_progress(done, total, msg):
+                pct = int(done / total * 100)
+                with _lock:
+                    _running_jobs[run_id] = {
+                        **_running_jobs.get(run_id, {}),
+                        "progress": pct,
+                        "message": f"[OpenCompass] {msg}",
+                    }
+            oc_results = run_oc_eval(model, oc_bids, _oc_progress)
+            for bid, res in oc_results.items():
+                results[bid] = res
+                overall_correct += res.get("correct", 0)
+                overall_total += res.get("total", 0)
+
+        for bid in non_oc_bids:
+            # 去除 _official / _custom 等后缀再查找评测函数
+            lookup = bid.replace("_official", "").replace("_ext", "").replace("_custom", "")
+            # 并行模式：使用并行版评测器
+            if parallel_workers > 0 and lookup in PARALLEL_EVALS:
+                eval_func = PARALLEL_EVALS[lookup]
+            else:
+                eval_func = BENCHMARK_EVALS.get(lookup) or BENCHMARK_EVALS.get(bid)
             if not eval_func:
-                continue
+                # 尝试从 HF Registry 获取评测类型映射
+                if HAS_HF_REGISTRY and is_hf_benchmark(bid):
+                    hf_info = get_hf_benchmark(bid)
+                    if hf_info:
+                        eval_type = hf_info.get("eval_type", "open_ended")
+                        eval_lookup = EVAL_TYPE_MAP.get(eval_type, "open_ended")
+                        eval_func = BENCHMARK_EVALS.get(eval_lookup)
 
             questions = _load_dataset(bid)
 
@@ -1165,20 +1576,49 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
             is_agent = bid in ("agent_eval",)
             is_rag = bid in ("rag_eval",)
             is_open = bid.startswith("open") or bid == "open_ended" or bid == "rubric_open" or is_agent or is_rag
+            is_multiturn = bid == "mt_bench"
 
             def _progress(done, total, msg):
                 pct = int(done / total * 100)
                 with _lock:
+                    job = _running_jobs.get(run_id, {})
+                    # 检查取消/暂停
+                    if job.get("cancelled"):
+                        raise CancelledError()
                     _running_jobs[run_id] = {
                         **_running_jobs[run_id],
                         "progress": pct,
                         "message": f"[{bid.upper()}] {msg}",
+                        "paused": job.get("paused", False),
+                    }
+                # 暂停检查：阻塞直到恢复或取消
+                while True:
+                    with _lock:
+                        job = _running_jobs.get(run_id, {})
+                        if job.get("cancelled"):
+                            raise CancelledError()
+                        if not job.get("paused"):
+                            break
+                    time.sleep(1)
+
+            # 检查是否被取消/暂停（每次 benchmark 开始前）
+            with _lock:
+                job_state = _running_jobs.get(run_id, {})
+                if job_state.get("cancelled"):
+                    raise CancelledError()
+                if job_state.get("paused"):
+                    # 暂停状态下的信息更新
+                    _running_jobs[run_id] = {
+                        **_running_jobs[run_id],
+                        "message": f"[{bid.upper()}] 已暂停",
                     }
 
             if is_open and judge_model:
                 result = eval_func(model, questions, _progress, judge_model)
             elif bid == "rubric_open":
                 result = eval_func(model, questions, _progress, judge_model, rubric_id="general")
+            elif is_multiturn and judge_model:
+                result = eval_func(model, questions, _progress, judge_model)
             else:
                 result = eval_func(model, questions, _progress)
             results[bid] = result
@@ -1246,6 +1686,38 @@ def run_evaluation(run_id: str, model: dict, benchmark_ids: list[str],
         # 持久化到 JSON（覆盖之前的 partial 记录）
         _save_run(run_id, final, user=user)
 
+    except CancelledError:
+        # 取消：不保留任何部分结果，仅标记为已终止
+        cancelled = {
+            "status": "cancelled",
+            "model_id": model.get("id", ""),
+            "model_name": model.get("name", ""),
+            "benchmarks": {},
+            "overall_score": 0,
+            "overall_correct": 0,
+            "overall_total": 0,
+            "completed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "elapsed": round(time.time() - _running_jobs.get(run_id, {}).get("_start_ts", time.time())),
+            "message": "用户终止评测（无保留数据）",
+        }
+        with _lock:
+            _completed_results[run_id] = cancelled
+            if run_id in _running_jobs:
+                _running_jobs[run_id]["status"] = "cancelled"
+                _running_jobs[run_id]["progress"] = 100
+                _running_jobs[run_id]["cancelled_done"] = True
+        # 清理 eval_runs.json 中该 run_id 的所有 partial 记录
+        runs_file = DATA_DIR / "eval_runs.json"
+        if runs_file.exists():
+            try:
+                with open(runs_file, encoding="utf-8") as f:
+                    runs = json.load(f)
+                runs = [r for r in runs if r.get("run_id") != run_id]
+                with open(runs_file, "w", encoding="utf-8") as f:
+                    json.dump(runs, f, ensure_ascii=False, indent=2)
+            except (json.JSONDecodeError, IOError):
+                pass
+
     except Exception as e:
         with _lock:
             _running_jobs[run_id] = {
@@ -1296,6 +1768,38 @@ def _save_run(run_id: str, result: dict, user: str = ""):
         json.dump(runs, f, ensure_ascii=False, indent=2)
 
 
+def list_running_jobs() -> list[dict]:
+    """返回所有运行中（pending/running）的任务列表"""
+    result = []
+    with _lock:
+        for run_id, job in _running_jobs.items():
+            status = job.get("status", "")
+            if status in ("pending", "running"):
+                entry = {
+                    "run_id": run_id,
+                    "status": status,
+                    "progress": job.get("progress", 0),
+                    "message": job.get("message", ""),
+                    "model_name": job.get("model_name", ""),
+                    "model_id": job.get("model_id", ""),
+                    "elapsed": round(time.time() - job.get("_start_ts", time.time())),
+                }
+                result.append(entry)
+    # 补充持久化文件中的运行中任务（服务器重启后）
+    runs_file = DATA_DIR / "eval_runs.json"
+    if runs_file.exists():
+        try:
+            with open(runs_file, encoding="utf-8") as f:
+                saved = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            saved = []
+        existing_ids = {r["run_id"] for r in result}
+        for r in saved:
+            if r.get("status") in ("pending", "running") and r.get("run_id") not in existing_ids:
+                result.append(r)
+    return result
+
+
 def start_eval(model: dict, benchmark_ids: list[str], judge_model: dict | None = None,
                quick_mode: bool = False, user: str = "") -> str:
     """启动评测，返回 run_id"""
@@ -1306,6 +1810,8 @@ def start_eval(model: dict, benchmark_ids: list[str], judge_model: dict | None =
             "status": "pending",
             "progress": 0,
             "message": "等待启动...",
+            "model_name": model.get("name", ""),
+            "model_id": model.get("id", ""),
             "_start_ts": time.time(),
         }
     t = threading.Thread(
@@ -1324,7 +1830,12 @@ def get_run_status(run_id: str) -> Optional[dict]:
             return _completed_results[run_id]
         if run_id in _running_jobs:
             job = dict(_running_jobs[run_id])
-            job.pop("_start_ts", None)
+            # 动态计算已用时间（暂停时返回冻结值）
+            ts = job.pop("_start_ts", None)
+            if job.get("paused") and job.get("_paused_elapsed") is not None:
+                job["elapsed"] = job["_paused_elapsed"]
+            elif ts and job.get("status") in ("pending", "running"):
+                job["elapsed"] = round(time.time() - ts)
             return job
     # 从持久化文件查找（服务器重启后）
     for r in list_completed_runs():

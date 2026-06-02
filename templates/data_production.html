@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}数据生产{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>🏭 自动化数据生产</h2>
+    <p>Self-Instruct · Evol-Instruct · Synthetic RL — 用 LLM 自动构建评测数据</p>
+  </div>
+</div>
+
+<!-- Tab 导航 -->
+<div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem">
+  <button class="tab-btn active" onclick="switchTab('self-instruct')" id="tab-self-instruct">🧬 Self-Instruct</button>
+  <button class="tab-btn" onclick="switchTab('evol-instruct')" id="tab-evol-instruct">⚡ Evol-Instruct</button>
+  <button class="tab-btn" onclick="switchTab('synthetic-rl')" id="tab-synthetic-rl">🤖 Synthetic RL</button>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     Tab 1: Self-Instruct
+     ════════════════════════════════════════════════════════════════ -->
+<div id="tab-self-instruct-content" class="tab-content active">
+  <div class="row" style="grid-template-columns: 1fr 1fr">
+    <div class="card">
+      <div class="card-header">
+        <h3>🧬 种子指令</h3>
+        <span class="tag">Seed</span>
+      </div>
+      <div style="margin-bottom:0.75rem">
+        <textarea id="seedText" rows="8" placeholder="每行一条种子指令，格式: 指令|答案|类别&#10;示例:&#10;什么是RLHF?|RLHF是基于人类反馈的强化学习...|知识理解&#10;解释一下Attention机制|Attention是一种加权求和机制...|知识理解" style="width:100%;padding:0.6rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem;resize:vertical;font-family:monospace"></textarea>
+      </div>
+      <p style="font-size:0.8rem;color:var(--text-muted)">或者从已有的 benchmark 选做种子</p>
+      <select id="seedBenchmark" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);margin-top:0.3rem">
+        <option value="">— 不选，用上方文本 —</option>
+        {% for b in benchmarks %}
+        <option value="{{ b.id }}">{{ b.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>⚙️ 参数</h3>
+        <span class="tag">Config</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">生成数量</label>
+          <input type="number" id="numItems" value="10" min="1" max="100" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        </div>
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">生产模型</label>
+          <select id="prodModel" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+            {% for m in models %}
+            <option value="{{ m.id }}">{{ m.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="grid-column:1/-1">
+          <label style="font-size:0.85rem;color:var(--text-secondary)">Benchmark 名称</label>
+          <input type="text" id="benchmarkNameSelf" value="self_instruct_data" placeholder="benchmark 标识符" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        </div>
+      </div>
+      <button type="button" class="btn-primary" onclick="runSelfInstruct()" style="width:100%;margin-top:1rem;padding:0.6rem">🧬 生成并注册</button>
+    </div>
+  </div>
+
+  <div id="selfInstructResult" class="card mt-1" style="display:none">
+    <div class="card-header"><h3>📋 生成结果</h3></div>
+    <div id="selfInstructItems"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     Tab 2: Evol-Instruct
+     ════════════════════════════════════════════════════════════════ -->
+<div id="tab-evol-instruct-content" class="tab-content">
+  <div class="row" style="grid-template-columns: 1fr 1fr">
+    <div class="card">
+      <div class="card-header">
+        <h3>⚡ 数据来源</h3>
+        <span class="tag">Source</span>
+      </div>
+      <div style="margin-bottom:0.75rem">
+        <label style="font-size:0.85rem;color:var(--text-secondary)">选择要进化的 Benchmark</label>
+        <select id="evolBenchmark" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+          <option value="">— 请选择 —</option>
+          {% for b in benchmarks %}
+          <option value="{{ b.id }}">{{ b.name }} ({{ b.category }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="margin-bottom:0.75rem">
+        <label style="font-size:0.85rem;color:var(--text-secondary)">进化策略</label>
+        <div id="evolStrategies" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.3rem">
+          <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer"><input type="checkbox" value="constraints" checked> 增加约束</label>
+          <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer"><input type="checkbox" value="deepen" checked> 深化推理</label>
+          <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer"><input type="checkbox" value="reasoning_steps" checked> 多步推理</label>
+          <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer"><input type="checkbox" value="complicate_input"> 复杂化输入</label>
+          <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer"><input type="checkbox" value="cross_domain"> 跨域融合</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>⚙️ 参数</h3>
+        <span class="tag">Config</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">进化数量</label>
+          <input type="number" id="evolCount" value="20" min="1" max="200" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        </div>
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">生产模型</label>
+          <select id="evolModel" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+            {% for m in models %}
+            <option value="{{ m.id }}">{{ m.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="grid-column:1/-1">
+          <label style="font-size:0.85rem;color:var(--text-secondary)">Benchmark 名称</label>
+          <input type="text" id="benchmarkNameEvol" value="evolved_data" placeholder="benchmark 标识符" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        </div>
+      </div>
+      <button type="button" class="btn-primary" onclick="runEvolInstruct()" style="width:100%;margin-top:1rem;padding:0.6rem">⚡ 进化并注册</button>
+    </div>
+  </div>
+
+  <div id="evolInstructResult" class="card mt-1" style="display:none">
+    <div class="card-header"><h3>📋 进化结果</h3></div>
+    <div id="evolInstructItems"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     Tab 3: Synthetic Data for RL
+     ════════════════════════════════════════════════════════════════ -->
+<div id="tab-synthetic-rl-content" class="tab-content">
+  <div class="row" style="grid-template-columns: 1fr 1fr">
+    <div class="card">
+      <div class="card-header">
+        <h3>🤖 指令来源</h3>
+        <span class="tag">Instructions</span>
+      </div>
+      <div style="margin-bottom:0.75rem">
+        <textarea id="rlInstructions" rows="6" placeholder="每行一条指令&#10;示例:&#10;解释一下 Transformer 的 Self-Attention 机制&#10;用 Python 实现一个二分查找算法&#10;比较监督学习与强化学习的区别" style="width:100%;padding:0.6rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem;resize:vertical;font-family:monospace"></textarea>
+      </div>
+      <p style="font-size:0.8rem;color:var(--text-muted)">或者从已有 benchmark 提取指令</p>
+      <select id="rlBenchmark" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);margin-top:0.3rem">
+        <option value="">— 不选，用上方文本 —</option>
+        {% for b in benchmarks %}
+        <option value="{{ b.id }}">{{ b.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>⚙️ 参数</h3>
+        <span class="tag">Config</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">偏好对数量</label>
+          <input type="number" id="rlCount" value="5" min="1" max="50" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        </div>
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">生成模型</label>
+          <select id="rlGenModel" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+            {% for m in models %}
+            <option value="{{ m.id }}">{{ m.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">Judge 模型（可选）</label>
+          <select id="rlJudgeModel" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+            <option value="">— 同生成模型 —</option>
+            {% for jm in judge_models %}
+            <option value="{{ jm.id }}">{{ jm.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:0.85rem;color:var(--text-secondary)">回答A风格</label>
+          <input type="text" id="styleA" value="详细且严谨" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        </div>
+        <div style="grid-column:1/-1">
+          <label style="font-size:0.85rem;color:var(--text-secondary)">Benchmark 名称</label>
+          <input type="text" id="benchmarkNameRL" value="rl_preference_data" placeholder="benchmark 标识符" style="width:100%;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        </div>
+      </div>
+      <button type="button" class="btn-primary" onclick="runSyntheticRL()" style="width:100%;margin-top:1rem;padding:0.6rem">🤖 生成并注册</button>
+    </div>
+  </div>
+
+  <div id="rlResult" class="card mt-1" style="display:none">
+    <div class="card-header"><h3>📋 偏好对结果</h3></div>
+    <div id="rlItems"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<style>
+.tab-btn {
+  padding: 0.5rem 1.2rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  transition: all 0.2s;
+  font-weight: 500;
+}
+.tab-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.tab-btn.active {
+  color: var(--accent);
+  background: transparent;
+  border-bottom: 2px solid var(--accent);
+  font-weight: 600;
+}
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.result-item {
+  padding: 0.6rem;
+  margin-bottom: 0.5rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.result-item .q { font-weight: 600; color: var(--text-primary); }
+.result-item .a { color: var(--text-secondary); margin-top: 0.2rem; }
+.result-item .meta { color: var(--text-muted); font-size: 0.75rem; margin-top: 0.2rem; }
+.result-item.chosen { border-left-color: var(--green); }
+.result-item.rejected { border-left-color: var(--orange); }
+.loading-placeholder {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+}
+.loading-placeholder .spinner {
+  display: inline-block;
+  width: 24px; height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 0.5rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+  document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('tab-' + name + '-content').classList.add('active');
+}
+
+// ── Self-Instruct ──
+function runSelfInstruct() {
+  var seedText = document.getElementById('seedText').value.trim();
+  var seedBenchmark = document.getElementById('seedBenchmark').value;
+  if (!seedText && !seedBenchmark) { alert('请输入种子指令或选择 benchmark'); return; }
+  var container = document.getElementById('selfInstructResult');
+  var itemsDiv = document.getElementById('selfInstructItems');
+  container.style.display = 'block';
+  itemsDiv.innerHTML = '<div class="loading-placeholder"><div class="spinner"></div><p>正在生成中，大型模型可能需要 1-2 分钟...</p></div>';
+  fetch('/api/data-production/self-instruct', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      seed_text: seedText,
+      seed_benchmark: seedBenchmark,
+      num_items: parseInt(document.getElementById('numItems').value) || 10,
+      model_id: document.getElementById('prodModel').value,
+      benchmark_name: document.getElementById('benchmarkNameSelf').value || 'self_instruct_data',
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { itemsDiv.innerHTML = '<div style="color:var(--red)">❌ ' + data.error + '</div>'; return; }
+    var html = '<div style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:0.75rem">✅ 生成 <strong>' + data.count + '</strong> 条，已注册为 <strong>' + data.filename + '</strong></div>';
+    (data.items || []).forEach(function(it) {
+      html += '<div class="result-item"><div class="q">❓ ' + escapeHtml(it.question) + '</div><div class="a">💡 ' + escapeHtml(it.answer) + '</div><div class="meta">' + (it.category || '通用') + ' · ' + (it.difficulty || 'medium') + ' · ' + (it.source || '') + '</div></div>';
+    });
+    itemsDiv.innerHTML = html;
+  })
+  .catch(function(e) { itemsDiv.innerHTML = '<div style="color:var(--red)">❌ 请求失败: ' + e.message + '</div>'; });
+}
+
+// ── Evol-Instruct ──
+function runEvolInstruct() {
+  var benchmark = document.getElementById('evolBenchmark').value;
+  if (!benchmark) { alert('请选择要进化的 benchmark'); return; }
+  var strategies = [];
+  document.querySelectorAll('#evolStrategies input:checked').forEach(function(cb) { strategies.push(cb.value); });
+  var container = document.getElementById('evolInstructResult');
+  var itemsDiv = document.getElementById('evolInstructItems');
+  container.style.display = 'block';
+  itemsDiv.innerHTML = '<div class="loading-placeholder"><div class="spinner"></div><p>正在进化中，每条可能需要几秒钟...</p></div>';
+  fetch('/api/data-production/evol-instruct', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      benchmark_id: benchmark,
+      strategies: strategies,
+      count: parseInt(document.getElementById('evolCount').value) || 20,
+      model_id: document.getElementById('evolModel').value,
+      benchmark_name: document.getElementById('benchmarkNameEvol').value || 'evolved_data',
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { itemsDiv.innerHTML = '<div style="color:var(--red)">❌ ' + data.error + '</div>'; return; }
+    var html = '<div style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:0.75rem">✅ 进化 <strong>' + data.count + '</strong> 条，已注册为 <strong>' + data.filename + '</strong></div>';
+    (data.items || []).forEach(function(it) {
+      var evolutionIcon = it.source && it.source.includes('constraints') ? '🔒' : it.source && it.source.includes('deepen') ? '🔍' : it.source && it.source.includes('reasoning') ? '🧮' : it.source && it.source.includes('complicate') ? '🌀' : '⚡';
+      html += '<div class="result-item"><div class="q">' + evolutionIcon + ' ' + escapeHtml(it.question) + '</div><div class="a">💡 ' + escapeHtml(it.answer) + '</div><div class="meta">' + (it.category || '通用') + ' · hard · ' + (it.source || '') + (it.evolution_note ? ' · ' + escapeHtml(it.evolution_note) : '') + '</div></div>';
+    });
+    itemsDiv.innerHTML = html;
+  })
+  .catch(function(e) { itemsDiv.innerHTML = '<div style="color:var(--red)">❌ 请求失败: ' + e.message + '</div>'; });
+}
+
+// ── Synthetic RL ──
+function runSyntheticRL() {
+  var text = document.getElementById('rlInstructions').value.trim();
+  var benchmark = document.getElementById('rlBenchmark').value;
+  if (!text && !benchmark) { alert('请输入指令或选择 benchmark'); return; }
+  var container = document.getElementById('rlResult');
+  var itemsDiv = document.getElementById('rlItems');
+  container.style.display = 'block';
+  itemsDiv.innerHTML = '<div class="loading-placeholder"><div class="spinner"></div><p>正在生成偏好对，可能需要 1-2 分钟...</p></div>';
+  fetch('/api/data-production/synthetic-rl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instructions_text: text,
+      benchmark_id: benchmark,
+      num_pairs: parseInt(document.getElementById('rlCount').value) || 5,
+      model_id: document.getElementById('rlGenModel').value,
+      judge_model_id: document.getElementById('rlJudgeModel').value || '',
+      style_a: document.getElementById('styleA').value || '详细且严谨',
+      benchmark_name: document.getElementById('benchmarkNameRL').value || 'rl_preference_data',
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { itemsDiv.innerHTML = '<div style="color:var(--red)">❌ ' + data.error + '</div>'; return; }
+    var html = '<div style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:0.75rem">✅ 生成 <strong>' + data.count + '</strong> 对偏好数据，已注册为 <strong>' + data.filename + '</strong></div>';
+    (data.items || []).forEach(function(it) {
+      html += '<div class="result-item chosen"><div class="q">✅ Chosen (得分 ' + it.chosen_score + ')</div><div class="a">' + escapeHtml(it.chosen.slice(0, 200)) + '</div></div>';
+      html += '<div class="result-item rejected"><div class="q">❌ Rejected (得分 ' + it.rejected_score + ')</div><div class="a">' + escapeHtml(it.rejected.slice(0, 200)) + '</div>';
+      if (it.reason) html += '<div class="meta">理由: ' + escapeHtml(it.reason) + '</div>';
+      html += '</div>';
+    });
+    itemsDiv.innerHTML = html;
+  })
+  .catch(function(e) { itemsDiv.innerHTML = '<div style="color:var(--red)">❌ 请求失败: ' + e.message + '</div>'; });
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  var d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+</script>
+{% endblock %}

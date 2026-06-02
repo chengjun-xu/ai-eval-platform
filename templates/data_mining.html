@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% block title %}数据挖掘{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>🔍 数据挖掘 Pipeline</h2>
+    <p>从原始数据自动挖掘评测题目，一键注册为 Benchmark</p>
+  </div>
+</div>
+
+<div class="row" style="grid-template-columns: 1fr 1fr">
+  <!-- 文本输入 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>📝 粘贴文本</h3>
+      <span class="tag">Text</span>
+    </div>
+    <form id="textMineForm" onsubmit="return false;">
+      <div style="margin-bottom:0.75rem">
+        <textarea id="rawText" rows="8" placeholder="粘贴知识文档、题目集、QA 对话记录等…" style="width:100%;padding:0.6rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem;resize:vertical"></textarea>
+      </div>
+      <div style="margin-bottom:0.75rem">
+        <label style="font-size:0.85rem;color:var(--text-secondary)">挖掘策略</label>
+        <select id="miningStrategy" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+          <option value="rules">规则提取（选择题/问句）</option>
+          <option value="llm">LLM 辅助提取（更快）</option>
+        </select>
+      </div>
+      <button type="button" class="btn-primary" onclick="mineFromText()" style="width:auto;padding:0.5rem 1.5rem">🔍 开始挖掘</button>
+    </form>
+  </div>
+
+  <!-- 文件上传 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>📄 上传文件</h3>
+      <span class="tag">PDF / DOCX / TXT / CSV / JSON</span>
+    </div>
+    <form id="fileMineForm" enctype="multipart/form-data">
+      <div style="margin-bottom:0.75rem;padding:2rem 1rem;text-align:center;border:2px dashed var(--border);border-radius:var(--radius);cursor:pointer;color:var(--text-muted)" id="dropZone">
+        <div style="font-size:2rem;margin-bottom:0.5rem">📂</div>
+        <div>点击或拖拽文件到此处</div>
+        <input type="file" name="file" id="fileInput" accept=".pdf,.docx,.txt,.csv,.json" style="display:none">
+      </div>
+      <button type="button" class="btn-primary" onclick="mineFromFile()" style="width:auto;padding:0.5rem 1.5rem">📂 挖掘文件</button>
+    </form>
+  </div>
+</div>
+
+<!-- HF 挖掘 -->
+<div class="card mt-1">
+  <div class="card-header">
+    <h3>🤗 HuggingFace 数据集挖掘</h3>
+    <span class="tag">HF</span>
+  </div>
+  <form id="hfMineForm" onsubmit="return false;">
+    <div class="row" style="grid-template-columns: 2fr 1fr 1fr">
+      <div>
+        <label style="font-size:0.85rem;color:var(--text-secondary)">HF 数据集路径</label>
+        <input type="text" id="hfPath" placeholder="例: cais/mmlu" value="cais/mmlu" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+      </div>
+      <div>
+        <label style="font-size:0.85rem;color:var(--text-secondary)">子集（可选）</label>
+        <input type="text" id="hfConfig" placeholder="留空=全部" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+      </div>
+      <div>
+        <label style="font-size:0.85rem;color:var(--text-secondary)">采样数</label>
+        <input type="number" id="hfSampleSize" value="50" min="1" max="1000" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+      </div>
+    </div>
+    <button type="button" class="btn-primary" onclick="mineFromHF()" style="margin-top:0.75rem;width:auto;padding:0.5rem 1.5rem">🤗 挖掘 HF 数据集</button>
+  </form>
+</div>
+
+<!-- 结果预览 -->
+<div class="card mt-1" id="resultPanel" style="display:none">
+  <div class="card-header">
+    <h3 id="resultTitle">挖掘结果</h3>
+    <span class="tag" id="resultCount">0 题</span>
+  </div>
+  <div style="margin-bottom:0.75rem;display:flex;gap:0.5rem;align-items:center">
+    <input type="text" id="benchmarkName" placeholder="注册为 benchmark 名称（英文，如 medical_qa）" style="flex:1;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+    <button class="btn-primary" onclick="registerBenchmark()" style="width:auto;padding:0.5rem 1.5rem">💾 注册为 Benchmark</button>
+    <button class="btn-secondary" onclick="clearResults()" style="width:auto;padding:0.5rem 1rem">清空</button>
+  </div>
+  <div id="resultsContainer" style="max-height:60vh;overflow-y:auto"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentResults = [];
+
+// 文件上传区域点击
+document.getElementById('dropZone').addEventListener('click', function() {
+  document.getElementById('fileInput').click();
+});
+document.getElementById('fileInput').addEventListener('change', function() {
+  if (this.files.length > 0) {
+    this.closest('.card').querySelector('.card-header h3').textContent = '📄 ' + this.files[0].name;
+  }
+});
+
+// 从文本挖掘
+async function mineFromText() {
+  const text = document.getElementById('rawText').value.trim();
+  const strategy = document.getElementById('miningStrategy').value;
+  if (!text) { alert('请先粘贴文本'); return; }
+
+  showLoading('正在挖掘文本...');
+  const resp = await fetch('/api/data-mining/text', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text, strategy, max_questions: 200})
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); hideLoading(); return; }
+  currentResults = data.results || [];
+  renderResults(currentResults, '文本挖掘结果');
+  hideLoading();
+}
+
+// 从文件挖掘
+async function mineFromFile() {
+  const fileInput = document.getElementById('fileInput');
+  if (!fileInput.files.length) { alert('请先选择文件'); return; }
+
+  showLoading('正在处理文件...');
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  const resp = await fetch('/api/data-mining/file', {
+    method: 'POST',
+    body: formData
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); hideLoading(); return; }
+  currentResults = data.results || [];
+  renderResults(currentResults, '文件挖掘结果: ' + fileInput.files[0].name);
+  hideLoading();
+}
+
+// 从HF挖掘
+async function mineFromHF() {
+  const path = document.getElementById('hfPath').value.trim();
+  const config = document.getElementById('hfConfig').value.trim();
+  const sampleSize = parseInt(document.getElementById('hfSampleSize').value) || 50;
+  if (!path) { alert('请输入 HF 路径'); return; }
+
+  showLoading('正在从 HuggingFace 挖掘...');
+  const resp = await fetch('/api/data-mining/hf', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hf_path: path, config: config || null, sample_size: sampleSize})
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); hideLoading(); return; }
+  currentResults = data.results || [];
+  renderResults(currentResults, 'HF 挖掘结果: ' + path);
+  hideLoading();
+}
+
+// 注册为benchmark
+async function registerBenchmark() {
+  const name = document.getElementById('benchmarkName').value.trim();
+  if (!name) { alert('请输入 benchmark 名称（英文）'); return; }
+  if (currentResults.length === 0) { alert('没有结果可注册'); return; }
+
+  showLoading('正在注册...');
+  const resp = await fetch('/api/data-mining/register', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({benchmark_name: name, items: currentResults})
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); }
+  else {
+    alert(`✅ 已注册为 ${data.filename}，共 ${data.total} 题`);
+    document.getElementById('benchmarkName').value = '';
+    currentResults = [];
+    renderResults([], '');
+  }
+  hideLoading();
+}
+
+// 渲染结果
+function renderResults(items, title) {
+  const panel = document.getElementById('resultPanel');
+  const container = document.getElementById('resultsContainer');
+  const countEl = document.getElementById('resultCount');
+
+  if (items.length === 0) { panel.style.display = 'none'; return; }
+
+  panel.style.display = 'block';
+  document.getElementById('resultTitle').textContent = title || '挖掘结果';
+  countEl.textContent = items.length + ' 题';
+
+  container.innerHTML = items.map((item, idx) => {
+    const hasChoices = item.choices && Object.keys(item.choices).length > 0;
+    let choicesHtml = '';
+    if (hasChoices) {
+      choicesHtml = '<div style="font-size:0.8rem;padding-left:1rem;margin-top:0.3rem">' +
+        Object.entries(item.choices).map(([k,v]) =>
+          `<span style="margin-right:1rem"><strong>${k}.</strong> ${v}</span>`
+        ).join('') +
+        '</div>';
+    }
+    return `<div style="padding:0.75rem;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:0.5rem">
+      <div style="font-weight:500;font-size:0.9rem;margin-bottom:0.2rem">
+        <span class="tag" style="font-size:0.65rem;background:var(--accent);color:#fff;margin-right:0.4rem">#${idx+1}</span>
+        ${item.question}
+      </div>
+      ${choicesHtml}
+      <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.3rem">
+        <span>📌 答案: <strong style="color:var(--accent)">${item.answer || '—'}</strong></span>
+        <span style="margin-left:1rem">🏷 ${item.category || '通用'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function showLoading(msg) {
+  const panel = document.getElementById('resultPanel');
+  panel.style.display = 'block';
+  document.getElementById('resultTitle').textContent = '⏳ ' + (msg || '处理中...');
+  document.getElementById('resultsContainer').innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text-muted)">⏳ 处理中，请稍候...</div>';
+}
+
+function hideLoading() {}
+
+function clearResults() {
+  currentResults = [];
+  document.getElementById('resultPanel').style.display = 'none';
+  document.getElementById('benchmarkName').value = '';
+}
+</script>
+{% endblock %}

@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}长尾场景{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>⚡ 长尾场景生成器</h2>
+    <p>对已有 Benchmark 自动生成对抗性/边缘/长尾变体</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>配置</h3>
+    <span class="tag">Perturbation</span>
+  </div>
+  <form id="longtailForm" onsubmit="return false;">
+    <!-- 选择源 Benchmark -->
+    <div style="margin-bottom:1rem">
+      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.4rem">选择源 Benchmark</label>
+      <select id="sourceBenchmark" style="width:100%;max-width:500px;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+        <option value="">— 请选择 —</option>
+        {% for b in local_benchmarks %}
+        <option value="{{ b.id }}">{{ b.name }} — {{ b.question_count }} 题</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- 扰动策略 -->
+    <div style="margin-bottom:1rem">
+      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.4rem">扰动策略（可多选）</label>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
+        <label class="strategy-card" style="padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.2s">
+          <input type="checkbox" name="strategies" value="negation" checked style="accent-color:var(--accent)">
+          <strong>否定反转</strong>
+          <div style="font-size:0.75rem;color:var(--text-muted)">加入"不/没有"</div>
+        </label>
+        <label class="strategy-card" style="padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.2s">
+          <input type="checkbox" name="strategies" value="numerical" checked style="accent-color:var(--orange)">
+          <strong>数值替换</strong>
+          <div style="font-size:0.75rem;color:var(--text-muted)">0/负数/大数</div>
+        </label>
+        <label class="strategy-card" style="padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.2s">
+          <input type="checkbox" name="strategies" value="ambiguity" style="accent-color:var(--accent)">
+          <strong>歧义插入</strong>
+          <div style="font-size:0.75rem;color:var(--text-muted)">模糊条件+相似选项</div>
+        </label>
+        <label class="strategy-card" style="padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.2s">
+          <input type="checkbox" name="strategies" value="missing_info" style="accent-color:var(--orange)">
+          <strong>缺失信息</strong>
+          <div style="font-size:0.75rem;color:var(--text-muted)">去掉关键条件</div>
+        </label>
+        <label class="strategy-card" style="padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.2s">
+          <input type="checkbox" name="strategies" value="adversarial_prefix" style="accent-color:var(--accent)">
+          <strong>对抗前缀</strong>
+          <div style="font-size:0.75rem;color:var(--text-muted)">误导指令</div>
+        </label>
+        <label class="strategy-card" style="padding:0.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.2s">
+          <input type="checkbox" name="strategies" value="multi_step" style="accent-color:var(--orange)">
+          <strong>多步嵌套</strong>
+          <div style="font-size:0.75rem;color:var(--text-muted)">复合推理链</div>
+        </label>
+      </div>
+    </div>
+
+    <!-- 每题变体数 -->
+    <div style="margin-bottom:1rem;display:flex;align-items:center;gap:1rem">
+      <label style="font-size:0.85rem;color:var(--text-secondary)">每题生成变体数</label>
+      <input type="number" id="variantsPerItem" value="2" min="1" max="5" style="width:80px;padding:0.4rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+      <span style="font-size:0.8rem;color:var(--text-muted)">每题生成 2 个不同策略的长尾变体</span>
+    </div>
+
+    <button type="button" class="btn-primary" onclick="generateLongtail()" style="width:auto;padding:0.6rem 2rem">⚡ 开始生成</button>
+  </form>
+</div>
+
+<!-- 结果 -->
+<div class="card mt-1" id="resultPanel" style="display:none">
+  <div class="card-header">
+    <h3 id="resultTitle">长尾变体</h3>
+    <span class="tag" id="resultCount">0 题</span>
+  </div>
+  <div style="margin-bottom:0.75rem;display:flex;gap:0.5rem;align-items:center">
+    <input type="text" id="benchmarkName" placeholder="注册为 benchmark 名称（自动追加 _longtail）" style="flex:1;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+    <button class="btn-primary" onclick="registerLongtail()" style="width:auto;padding:0.5rem 1.5rem">💾 注册为 Benchmark</button>
+    <button class="btn-secondary" onclick="clearResults()" style="width:auto;padding:0.5rem 1rem">清空</button>
+  </div>
+
+  <!-- 策略分布 -->
+  <div id="strategyStats" style="margin-bottom:0.75rem"></div>
+
+  <!-- 变体列表 -->
+  <div id="variantsContainer" style="max-height:60vh;overflow-y:auto"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function generateLongtail() {
+  const sourceId = document.getElementById('sourceBenchmark').value;
+  if (!sourceId) { alert('请选择源 Benchmark'); return; }
+
+  const strategies = [];
+  document.querySelectorAll('input[name="strategies"]:checked').forEach(cb => {
+    strategies.push(cb.value);
+  });
+  if (strategies.length === 0) { alert('请至少选择一个扰动策略'); return; }
+
+  const variantsPerItem = parseInt(document.getElementById('variantsPerItem').value) || 2;
+
+  showLoading('正在生成...');
+  const resp = await fetch('/api/longtail/generate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({benchmark_id: sourceId, strategies, variants_per_item: variantsPerItem})
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); hideLoading(); return; }
+
+  window._longtailResults = data.variants || [];
+  renderVariants(window._longtailResults, data.source_name || sourceId);
+  hideLoading();
+
+  // 自动填入 benchmark 名称
+  document.getElementById('benchmarkName').value = (data.source_name || sourceId).toLowerCase().replace(/[^a-z0-9]/g, '_') + '_longtail';
+}
+
+async function registerLongtail() {
+  const name = document.getElementById('benchmarkName').value.trim();
+  if (!name) { alert('请输入 benchmark 名称'); return; }
+  if (!window._longtailResults || window._longtailResults.length === 0) { alert('没有结果可注册'); return; }
+
+  showLoading('正在注册...');
+  const resp = await fetch('/api/longtail/register', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({benchmark_name: name, items: window._longtailResults})
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); }
+  else {
+    alert(`✅ 已注册为 ${data.filename}，共 ${data.total} 题`);
+    document.getElementById('benchmarkName').value = '';
+    window._longtailResults = [];
+    document.getElementById('resultPanel').style.display = 'none';
+  }
+  hideLoading();
+}
+
+function renderVariants(variants, sourceName) {
+  const panel = document.getElementById('resultPanel');
+  panel.style.display = 'block';
+  document.getElementById('resultTitle').textContent = '⚡ 长尾变体 — 基于 ' + sourceName;
+  document.getElementById('resultCount').textContent = variants.length + ' 题';
+
+  // 策略分布
+  const stats = {};
+  variants.forEach(v => { stats[v.strategy] = (stats[v.strategy] || 0) + 1; });
+  const statsHtml = Object.entries(stats).map(([k, v]) =>
+    `<span class="tag" style="background:var(--accent);color:#fff;margin-right:0.4rem">${k}: ${v}题</span>`
+  ).join('');
+  document.getElementById('strategyStats').innerHTML = '<div style="font-size:0.85rem;color:var(--text-secondary)">策略分布: ' + statsHtml + '</div>';
+
+  // 变体列表
+  const container = document.getElementById('variantsContainer');
+  container.innerHTML = variants.map((v, idx) => {
+    const hasChoices = v.choices && Object.keys(v.choices).length > 0;
+    let choicesHtml = '';
+    if (hasChoices) {
+      choicesHtml = '<div style="font-size:0.8rem;padding-left:1rem;margin-top:0.3rem">' +
+        Object.entries(v.choices).map(([k, val]) =>
+          `<span style="margin-right:1rem"><strong>${k}.</strong> ${val}</span>`
+        ).join('') +
+        '</div>';
+    }
+    // 标记变了什么
+    const diffClass = v.strategy === 'negation' ? 'var(--orange)' :
+                      v.strategy === 'adversarial_prefix' ? 'var(--accent)' :
+                      v.strategy === 'ambiguity' ? '#7C3AED' : 'var(--text-muted)';
+    return `<div style="padding:0.75rem;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:0.5rem;border-left:3px solid ${diffClass}">
+      <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.3rem">
+        <span class="tag" style="font-size:0.65rem;background:${diffClass};color:#fff">#${idx+1}</span>
+        <span class="tag" style="font-size:0.65rem;background:var(--bg-hover);color:var(--text-muted)">${v.strategy}</span>
+      </div>
+      <div style="font-weight:500;font-size:0.9rem">${v.question}</div>
+      ${choicesHtml}
+      <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.3rem">
+        <span>📌 答案: <strong style="color:${diffClass}">${v.answer || '—'}</strong></span>
+        <span style="margin-left:1rem">🏷 ${v.category || '长尾'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function showLoading(msg) {
+  const panel = document.getElementById('resultPanel');
+  panel.style.display = 'block';
+  document.getElementById('resultTitle').textContent = '⏳ ' + (msg || '生成中...');
+  document.getElementById('variantsContainer').innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text-muted)">⏳ 生成中...</div>';
+}
+
+function hideLoading() {}
+
+function clearResults() {
+  window._longtailResults = [];
+  document.getElementById('resultPanel').style.display = 'none';
+  document.getElementById('benchmarkName').value = '';
+}
+</script>
+{% endblock %}

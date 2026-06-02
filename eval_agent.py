@@ -36,19 +36,22 @@ def load_benchmarks() -> list:
     mapping = {
         "mmlu_sample": "MMLU",
         "mmlu_extended": "MMLU",
+        "mmlu_ext": "MMLU",
         "gsm8k_sample": "GSM8K",
         "gsm8k_extended": "GSM8K",
+        "gsm8k_ext": "GSM8K",
         "humaneval_sample": "HumanEval",
         "humaneval_extended": "HumanEval",
+        "humaneval_ext": "HumanEval",
         "open_ended_sample": "OpenEval",
     }
-    for fname in sorted(datasets_dir.glob("*_extended.json")) + sorted(datasets_dir.glob("*_sample.json")):
+    for fname in sorted(datasets_dir.glob("*_ext.json")) + sorted(datasets_dir.glob("*_extended.json")) + sorted(datasets_dir.glob("*_sample.json")):
         key = fname.stem
         name = mapping.get(key, key)
-        version = "扩展版" if "_extended" in key else "基础版"
+        version = "扩展版" if ("_ext" in key or "_extended" in key) else "基础版"
         with open(fname, encoding="utf-8") as f:
             items = json.load(f)
-        bid = key.replace("_sample", "").replace("_extended", "") + ("_ext" if "_extended" in key else "")
+        bid = key.replace("_sample", "").replace("_extended", "").replace("_ext", "") + ("_ext" if ("_ext" in key or "_extended" in key) else "")
         benchmarks.append({
             "id": bid,
             "name": name,
@@ -58,7 +61,7 @@ def load_benchmarks() -> list:
                        "代码" if "code" in name.lower() or "humaneval" in name.lower() else
                        "开放题",
             "count": len(items),
-            "extended": "_extended" in key,
+            "extended": "_ext" in key or "_extended" in key,
         })
     return benchmarks
 

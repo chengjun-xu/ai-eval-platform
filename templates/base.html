@@ -40,6 +40,26 @@
           <span>运行评测</span>
           <span class="badge">{{ sys_info.total_benchmarks }}</span>
         </a>
+        <a href="{{ url_for('data_mining_page') }}" class="{% if request.endpoint == 'data_mining_page' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1010 10M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
+          <span>数据挖掘</span>
+        </a>
+        <a href="{{ url_for('data_production_page') }}" class="{% if request.endpoint == 'data_production_page' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="10" y1="17" x2="16" y2="17"/></svg>
+          <span>数据生产</span>
+        </a>
+        <a href="{{ url_for('longtail_gen_page') }}" class="{% if request.endpoint == 'longtail_gen_page' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+          <span>长尾场景</span>
+        </a>
+        <a href="{{ url_for('regression_page') }}" class="{% if request.endpoint == 'regression_page' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          <span>回归检测</span>
+        </a>
+        <a href="{{ url_for('consistency_page') }}" class="{% if request.endpoint == 'consistency_page' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span>一致性</span>
+        </a>
         <a href="{{ url_for('history_page') }}" class="{% if request.endpoint == 'history_page' %}active{% endif %}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <span>历史记录</span>
@@ -48,6 +68,10 @@
         <a href="{{ url_for('compare_page') }}" class="{% if request.endpoint == 'compare_page' %}active{% endif %}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           <span>对比</span>
+        </a>
+        <a href="{{ url_for('weakness_page') }}" class="{% if request.endpoint == 'weakness_page' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <span>弱项挖掘</span>
         </a>
         <a href="{{ url_for('rubrics_page') }}" class="{% if request.endpoint == 'rubrics_page' %}active{% endif %}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>

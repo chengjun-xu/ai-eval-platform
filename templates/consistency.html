@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}评分一致性{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>🛡️ 评分一致性分析</h2>
+    <p>Cohen's Kappa + 分布偏差分析</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>选择评测记录</h3>
+    <span class="tag">Cohen's Kappa</span>
+  </div>
+  <form id="consistencyForm" onsubmit="return false;">
+    <div style="margin-bottom:0.75rem">
+      <label style="font-size:0.85rem;color:var(--text-secondary);display:block;margin-bottom:0.3rem">选择 2 次以上含有 Judge 评分的评测</label>
+      <div style="display:flex;flex-direction:column;gap:0.3rem;max-height:300px;overflow-y:auto">
+        {% for r in runs %}
+        <label style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.6rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer">
+          <input type="checkbox" name="run_ids" value="{{ r.run_id }}" style="accent-color:var(--accent)">
+          <span style="font-size:0.85rem">{{ r.model_name }} — {{ r.completed_at[:16] if r.completed_at else '?' }} ({{ r.overall_score }}分)</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <button type="button" class="btn-primary" onclick="analyzeConsistency()" style="width:auto;padding:0.5rem 2rem">📊 分析一致性</button>
+  </form>
+</div>
+
+<div id="resultArea" style="display:none">
+  <!-- Kappa 卡片 -->
+  <div class="card mt-1">
+    <div class="card-header">
+      <h3>Kappa 一致性</h3>
+      <span class="tag">κ</span>
+    </div>
+    <div id="kappaResults" class="row" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))"></div>
+  </div>
+
+  <!-- 分布卡片 -->
+  <div class="card mt-1">
+    <div class="card-header">
+      <h3>评分分布</h3>
+      <span class="tag">Bias</span>
+    </div>
+    <div id="distributionResults" class="row" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function analyzeConsistency() {
+  const checked = document.querySelectorAll('input[name="run_ids"]:checked');
+  const runIds = Array.from(checked).map(cb => cb.value);
+  if (runIds.length < 2) { alert('请至少选择 2 次评测'); return; }
+
+  document.getElementById('resultArea').style.display = 'block';
+
+  const resp = await fetch('/api/consistency/analyze', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({run_ids: runIds})
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); return; }
+
+  // Kappa 结果
+  let kappaHtml = '';
+  for (const [pair, result] of Object.entries(data.pairs)) {
+    const color = result.kappa >= 0.61 ? 'var(--accent)' : result.kappa >= 0.41 ? 'var(--orange)' : 'var(--text-muted)';
+    kappaHtml += `<div class="card" style="padding:1rem">
+      <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.3rem">${pair}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:${color}">${result.kappa}</div>
+      <div style="font-size:0.8rem;color:var(--text-muted)">${result.interpretation} · 一致率 ${result.agreement}%</div>
+    </div>`;
+  }
+  if (!kappaHtml) kappaHtml = '<p style="color:var(--text-muted)">需要 2 个以上含 Judge 评分的模型</p>';
+  document.getElementById('kappaResults').innerHTML = kappaHtml;
+
+  // 分布分析
+  let distHtml = '';
+  for (const [judge, dist] of Object.entries(data.distributions || {})) {
+    const maxCount = Math.max(...dist.histogram, 1);
+    const bars = dist.histogram.map((c, i) =>
+      `<div style="display:flex;align-items:center;gap:0.3rem;margin-bottom:0.2rem">
+        <span style="font-size:0.75rem;width:1.5rem">${i+1}分</span>
+        <div style="flex:1;height:1rem;background:var(--bg-hover);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${c/maxCount*100}%;background:var(--accent);border-radius:4px"></div>
+        </div>
+        <span style="font-size:0.75rem;width:2rem;text-align:right">${c}</span>
+      </div>`
+    ).join('');
+    distHtml += `<div class="card" style="padding:1rem">
+      <div style="font-weight:600;margin-bottom:0.5rem">${judge}</div>
+      <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.5rem">
+        均值 ${dist.mean} · 标准差 ${dist.std} · <span style="color:${dist.mean > 4 ? 'var(--orange)' : dist.mean < 2.5 ? 'var(--accent)' : 'var(--text-muted)'}">${dist.bias}</span>
+      </div>
+      ${bars}
+    </div>`;
+  }
+  document.getElementById('distributionResults').innerHTML = distHtml;
+}
+</script>
+{% endblock %}

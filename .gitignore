@@ -31,8 +31,15 @@ instance/
 data/*.json
 !data/datasets/*.json
 
+# Dataset cache (auto-generated, not for version control)
+data/datasets/.datasets_cache.json
+
 # Logs
 logs/
 
-# Local docs
+# Local agent metadata
+.hermes/
+
+# Local docs & assets
 使用指南.md
+AI_Medical_Device_Design.pptx

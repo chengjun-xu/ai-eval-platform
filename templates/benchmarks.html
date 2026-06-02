@@ -18,6 +18,18 @@
 </div>
 {% else %}
 
+<!-- 运行中评测横幅 -->
+<div id="runningBanner" style="display:none;margin-bottom:1rem">
+  <div class="card" style="border-left:3px solid var(--accent);padding:0.75rem 1rem">
+    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+      <span style="font-size:1.1rem">⏳</span>
+      <span style="font-weight:600;font-size:0.9rem">运行中的评测</span>
+      <span id="runningCount" class="tag" style="background:var(--accent);color:#fff;font-size:0.65rem">0</span>
+    </div>
+    <div id="runningJobList" style="display:flex;flex-direction:column;gap:0.5rem"></div>
+  </div>
+</div>
+
 <!-- 评测配置表单 -->
 <div class="card">
   <div class="card-header">
@@ -26,13 +38,21 @@
   </div>
   <form method="post" action="{{ url_for('eval_run') }}" id="evalForm">
     <div style="margin-bottom:1.25rem">
-      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">选择模型 *</label>
-      <select name="model_id" required style="width:100%;max-width:400px;padding:0.65rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.95rem;outline:none;appearance:none">
-        <option value="">— 请选择模型 —</option>
+      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">选择模型 * <span style="color:var(--text-muted);font-weight:400">可多选，选几个就同时跑几个</span></label>
+      <div class="model-select-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0.5rem">
         {% for m in models %}
-        <option value="{{ m.id }}">{{ m.name }} ({{ m.provider }})</option>
+        <label class="model-select-card" style="display:flex;align-items:center;gap:0.6rem;padding:0.7rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.15s">
+          <input type="checkbox" name="model_ids" value="{{ m.id }}" style="accent-color:var(--accent);width:16px;height:16px" onchange="this.parentElement.style.borderColor=this.checked?'var(--accent)':'var(--border)';this.parentElement.style.background=this.checked?'rgba(0,212,224,0.05)':'var(--bg-card)';updateModelCount()">
+          <div>
+            <div style="font-weight:600;font-size:0.9rem">{{ m.name }}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted)">{{ m.provider }}</div>
+          </div>
+        </label>
         {% endfor %}
-      </select>
+      </div>
+      <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">
+        <span id="modelCount">0</span> 个模型已选
+      </div>
     </div>
 
     <div style="margin-bottom:1.25rem">
@@ -68,26 +88,57 @@
       <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.3rem">💡 日常迭代用快速回归，版本发布前用完整评测</div>
     </div>
 
-    <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">选择 Benchmark *（可多选）</label>
-    <div class="benchmark-select-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.75rem;margin-bottom:1.25rem">
+    <!-- Benchmark 搜索与筛选 -->
+    <div style="margin-bottom:1rem">
+      <label style="display:block;font-size:0.85rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.5rem">选择 Benchmark *（可多选，共 {{ benchmarks | length }} 个）</label>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
+        <input type="text" id="benchmarkSearch" placeholder="🔍 搜索 benchmark 名称/描述..." style="flex:1;min-width:200px;padding:0.5rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem;outline:none">
+      </div>
+      <!-- 类别筛选 -->
+      <div id="categoryFilter" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem">
+        <button class="cat-btn cat-active" data-cat="all" style="padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:20px;background:var(--accent);color:#fff;font-size:0.8rem;cursor:pointer">全部</button>
+        {% set cats = benchmarks | map(attribute='category') | unique | sort %}
+        {% for cat in cats %}
+        <button class="cat-btn" data-cat="{{ cat }}" style="padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:20px;background:var(--bg-card);color:var(--text-secondary);font-size:0.8rem;cursor:pointer;transition:all 0.15s">{{ cat }}</button>
+        {% endfor %}
+      </div>
+      <!-- 全选/取消 -->
+      <div style="display:flex;gap:0.75rem;align-items:center;font-size:0.85rem;margin-bottom:0.5rem">
+        <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer">
+          <input type="checkbox" id="selectAllVisible" style="accent-color:var(--accent)"> 全选当前显示
+        </label>
+        <button type="button" id="clearAllBtn" style="background:none;border:none;color:var(--text-muted);cursor:pointer;text-decoration:underline;font-size:0.8rem">清除所有选择</button>
+        <span style="color:var(--text-muted);font-size:0.8rem">
+          <span id="selectedCount">0</span> / {{ benchmarks | length }} 已选
+        </span>
+      </div>
+    </div>
+
+    <div class="benchmark-select-grid" id="benchmarkGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.75rem;margin-bottom:1.25rem;max-height:65vh;overflow-y:auto;padding-right:0.5rem">
       {% for b in benchmarks %}
-      <label class="benchmark-select-card" style="display:flex;align-items:flex-start;gap:0.75rem;padding:1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;transition:all 0.2s">
+      <label class="benchmark-select-card" data-category="{{ b.category }}" data-name="{{ b.name }} {{ b.full_name }} {{ b.description }}" style="display:flex;align-items:flex-start;gap:0.75rem;padding:1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;transition:all 0.2s">
         <input type="checkbox" name="benchmarks" value="{{ b.id }}" style="margin-top:0.15rem;accent-color:var(--accent);width:16px;height:16px">
-        <div style="flex:1">
-          <div style="font-weight:600;font-size:0.95rem">{{ b.name }}
-            {%- if b.version == '扩展版' %} <span class="tag" style="font-size:0.65rem;padding:0.1rem 0.4rem;background:var(--accent);color:#fff">扩展版</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:0.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ b.name }}
+            {%- if b.source == 'huggingface' %} <span class="tag" style="font-size:0.65rem;padding:0.1rem 0.4rem;background:#7C3AED;color:#fff">HF</span>
+            {%- elif b.source == 'opencompass' %} <span class="tag" style="font-size:0.65rem;padding:0.1rem 0.4rem;background:#E03050;color:#fff">OC</span>
+            {%- elif b.version == '扩展版' %} <span class="tag" style="font-size:0.65rem;padding:0.1rem 0.4rem;background:var(--accent);color:#fff">扩展版</span>
             {%- else %} <span class="tag" style="font-size:0.65rem;padding:0.1rem 0.4rem;background:var(--bg-hover);color:var(--text-muted)">基础版</span>
             {%- endif %}
           </div>
           <div style="font-size:0.8rem;color:var(--accent);margin-bottom:0.2rem">{{ b.category }} · {{ b.question_count }} 题</div>
-          <div style="font-size:0.8rem;color:var(--text-muted);line-height:1.4">{{ b.description[:80] }}{{ '...' if b.description|length > 80 }}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ b.description[:100] }}{{ '...' if b.description|length > 100 }}</div>
         </div>
       </label>
       {% endfor %}
     </div>
 
-    <button type="submit" class="btn-primary" style="width:auto;padding:0.7rem 2.5rem;font-size:1rem" onclick="this.disabled=true;this.textContent='正在启动...';this.form.submit()">
-      🚀 启动评测
+    <button type="submit" class="btn-primary" style="width:auto;padding:0.7rem 2.5rem;font-size:1rem" onclick="
+      var ms = document.querySelectorAll('input[name=\'model_ids\']:checked').length;
+      if (ms === 0) { alert('请至少选择一个模型'); return false; }
+      this.disabled=true; this.textContent='🚀 正在为 ' + ms + ' 个模型启动评测...'; this.form.submit()
+    ">
+      🚀 启动评测（多模型）
     </button>
   </form>
 </div>
@@ -135,15 +186,142 @@
 
 {% block scripts %}
 <script>
-// 选中卡片高亮（修复双击翻转的 Bug）
-document.querySelectorAll('.benchmark-select-card').forEach(card => {
+// 类别筛选 + 搜索
+const allCards = document.querySelectorAll('.benchmark-select-card');
+const catBtns = document.querySelectorAll('.cat-btn');
+const searchInput = document.getElementById('benchmarkSearch');
+let activeCat = 'all';
+
+function filterCards() {
+  const q = (searchInput.value || '').toLowerCase();
+  let visibleCount = 0;
+  allCards.forEach(card => {
+    const cat = card.dataset.category;
+    const name = (card.dataset.name || '').toLowerCase();
+    const catMatch = activeCat === 'all' || cat === activeCat;
+    const searchMatch = !q || name.includes(q);
+    const show = catMatch && searchMatch;
+    card.style.display = show ? '' : 'none';
+    if (show) visibleCount++;
+  });
+  // 更新全选按钮文字
+  const visLabel = document.getElementById('selectAllVisible');
+  visLabel.nextSibling.textContent = `全选当前显示 (${visibleCount})`;
+  updateSelectedCount();
+}
+
+catBtns.forEach(btn => {
+  btn.addEventListener('click', function() {
+    catBtns.forEach(b => {
+      b.style.background = 'var(--bg-card)';
+      b.style.color = 'var(--text-secondary)';
+    });
+    this.style.background = 'var(--accent)';
+    this.style.color = '#fff';
+    activeCat = this.dataset.cat;
+    filterCards();
+  });
+});
+
+searchInput.addEventListener('input', filterCards);
+
+// 全选当前可见
+document.getElementById('selectAllVisible').addEventListener('change', function() {
+  const checked = this.checked;
+  allCards.forEach(card => {
+    if (card.style.display !== 'none') {
+      card.querySelector('input[type="checkbox"]').checked = checked;
+      card.style.borderColor = checked ? 'var(--accent)' : 'var(--border)';
+      card.style.boxShadow = checked ? '0 0 0 1px var(--accent)' : 'none';
+    }
+  });
+  updateSelectedCount();
+});
+
+// 清除所有
+document.getElementById('clearAllBtn').addEventListener('click', function() {
+  allCards.forEach(card => {
+    card.querySelector('input[type="checkbox"]').checked = false;
+    card.style.borderColor = 'var(--border)';
+    card.style.boxShadow = 'none';
+  });
+  document.getElementById('selectAllVisible').checked = false;
+  updateSelectedCount();
+});
+
+// 统计已选数
+function updateSelectedCount() {
+  const total = document.querySelectorAll('input[name="benchmarks"]:checked').length;
+  document.getElementById('selectedCount').textContent = total;
+}
+
+// 点击卡片切换选中
+allCards.forEach(card => {
   card.addEventListener('click', function(e) {
+    if (e.target.tagName === 'INPUT') return;
     e.preventDefault();
     const cb = this.querySelector('input[type="checkbox"]');
     cb.checked = !cb.checked;
     this.style.borderColor = cb.checked ? 'var(--accent)' : 'var(--border)';
     this.style.boxShadow = cb.checked ? '0 0 0 1px var(--accent)' : 'none';
+    updateSelectedCount();
+  });
+  // 监听 checkbox 变更
+  card.querySelector('input[type="checkbox"]').addEventListener('change', function(e) {
+    card.style.borderColor = this.checked ? 'var(--accent)' : 'var(--border)';
+    card.style.boxShadow = this.checked ? '0 0 0 1px var(--accent)' : 'none';
+    updateSelectedCount();
   });
 });
+
+// 初始化统计
+updateSelectedCount();
+document.getElementById('selectAllVisible').nextSibling.textContent = '全选当前显示 (200+)';
+
+// 模型多选统计
+function updateModelCount() {
+  var n = document.querySelectorAll('input[name="model_ids"]:checked').length;
+  document.getElementById('modelCount').textContent = n;
+}
+
+// ── 运行中评测轮询 ──
+function pollRunningJobs() {
+  fetch('/api/running-jobs')
+    .then(function(r) { return r.json(); })
+    .then(function(jobs) {
+      var banner = document.getElementById('runningBanner');
+      var list = document.getElementById('runningJobList');
+      var count = document.getElementById('runningCount');
+      if (!banner || !list) return;
+      if (jobs.length === 0) {
+        banner.style.display = 'none';
+        return;
+      }
+      banner.style.display = '';
+      count.textContent = jobs.length;
+      list.innerHTML = jobs.map(function(j) {
+        var pct = j.progress || 0;
+        var elapsed = j.elapsed || 0;
+        var modelName = j.model_name || '模型';
+        var link = '/eval/status/' + j.run_id;
+        return '<a href="' + link + '" style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0.75rem;background:var(--bg-hover);border-radius:var(--radius-sm);text-decoration:none;color:inherit;transition:background 0.15s">'
+          + '<div style="flex:1;min-width:0">'
+          + '<div style="font-weight:600;font-size:0.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⏳ ' + modelName + '</div>'
+          + '<div style="font-size:0.75rem;color:var(--text-muted)">' + (j.message || '运行中') + ' · ⏱ ' + elapsed + 's</div>'
+          + '</div>'
+          + '<div style="text-align:right;min-width:80px">'
+          + '<div style="font-size:0.8rem;font-weight:600;color:var(--accent)">' + pct + '%</div>'
+          + '<div style="height:4px;width:80px;background:var(--bg-input);border-radius:2px;margin-top:0.2rem">'
+          + '<div style="height:100%;width:' + pct + '%;background:var(--accent);border-radius:2px;transition:width 0.5s"></div>'
+          + '</div>'
+          + '</div>'
+          + '</a>';
+      }).join('');
+    })
+    .catch(function() {});
+}
+// 启动轮询，每 5 秒刷新
+pollRunningJobs();
+setInterval(pollRunningJobs, 5000);
 </script>
 {% endblock %}

@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}弱项挖掘{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>🔍 自动弱项挖掘</h2>
+    <p>分析模型评测结果，定位能力短板和错误模式</p>
+  </div>
+</div>
+
+{% if not models_with_data %}
+<div class="card" style="text-align:center;padding:3rem">
+  <div style="font-size:3rem;margin-bottom:1rem">📊</div>
+  <h3>暂无评测数据</h3>
+  <p style="color:var(--text-secondary);margin-top:0.5rem">请先运行评测，再回来分析弱项</p>
+  <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-block;width:auto;margin-top:1rem;padding:0.6rem 2rem;text-decoration:none">去运行评测</a>
+</div>
+{% else %}
+
+<!-- 选择模型 -->
+<div class="card">
+  <div class="card-header">
+    <h3>选择模型</h3>
+    <span class="tag">Analysis</span>
+  </div>
+  <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center">
+    <select id="modelSelect" style="flex:1;min-width:200px;padding:0.65rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.95rem;outline:none">
+      <option value="">— 选择模型 —</option>
+      {% for m in models_with_data %}
+      <option value="{{ m }}">{{ m }}</option>
+      {% endfor %}
+    </select>
+    <select id="compareSelect" style="flex:1;min-width:200px;padding:0.65rem 0.8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.95rem;outline:none">
+      <option value="">— 对比模型（可选） —</option>
+      {% for m in models_with_data %}
+      <option value="{{ m }}">{{ m }}</option>
+      {% endfor %}
+    </select>
+    <button id="analyzeBtn" class="btn-primary" style="width:auto;padding:0.65rem 2rem" onclick="analyze()">🔍 开始分析</button>
+  </div>
+</div>
+
+<!-- 分析结果 -->
+<div id="results" style="display:none"></div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function analyze() {
+  var model = document.getElementById('modelSelect').value;
+  var compare = document.getElementById('compareSelect').value;
+  if (!model) { alert('请选择模型'); return; }
+
+  var btn = document.getElementById('analyzeBtn');
+  btn.textContent = '⏳ 分析中...';
+  btn.disabled = true;
+
+  var url = '/api/weakness/analyze?model=' + encodeURIComponent(model);
+  if (compare) url += '&compare=' + encodeURIComponent(compare);
+
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      renderResults(data, model, compare);
+    })
+    .catch(function(err) {
+      document.getElementById('results').innerHTML = '<div class="card" style="text-align:center;padding:2rem;border-color:var(--red)"><h3 style="color:var(--red)">❌ 分析失败</h3><p style="color:var(--text-muted)">' + err.message + '</p></div>';
+      document.getElementById('results').style.display = 'block';
+    })
+    .finally(function() {
+      btn.textContent = '🔍 开始分析';
+      btn.disabled = false;
+    });
+}
+
+function renderResults(data, model, compare) {
+  var results = document.getElementById('results');
+  var error = data.error || (data.models && data.models[model] && data.models[model].error);
+
+  if (error) {
+    results.innerHTML = '<div class="card" style="text-align:center;padding:2rem;border-color:var(--orange)"><h3 style="color:var(--orange)">⚠️ ' + error + '</h3></div>';
+    results.style.display = 'block';
+    return;
+  }
+
+  var mainData = data.models ? data.models[model] : data;
+  var html = '';
+
+  // ── 概览卡片 ──
+  html += '<div class="row mt-1" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))">';
+  html += '<div class="card" style="text-align:center;border-color:var(--accent)"><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">综合得分</div><div style="font-size:2.5rem;font-weight:800;color:var(--accent)">' + (mainData.overall_score || 0) + '%</div></div>';
+  html += '<div class="card" style="text-align:center"><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">评测次数</div><div style="font-size:2rem;font-weight:700">' + (mainData.total_runs || 0) + '</div></div>';
+  html += '<div class="card" style="text-align:center"><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">测试题数</div><div style="font-size:2rem;font-weight:700">' + (mainData.total_questions || 0) + '</div></div>';
+  html += '<div class="card" style="text-align:center"><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">正确题数</div><div style="font-size:2rem;font-weight:700;color:var(--green)">' + (mainData.total_correct || 0) + '</div></div>';
+  html += '</div>';
+
+  // ── 能力维度雷达 + 弱项排名 ──
+  html += '<div class="row mt-1" style="grid-template-columns: 1fr 1fr">';
+
+  // 左列：能力维度排名
+  html += '<div class="card">';
+  html += '<div class="card-header"><h3>📊 能力维度排名</h3><span class="tag" style="background:var(--accent);color:#fff">从弱到强</span></div>';
+  html += '<div style="display:flex;flex-direction:column;gap:0.6rem">';
+  var dims = (mainData.dimensions || []).sort(function(a,b) { return a.score - b.score; });
+  dims.forEach(function(d) {
+    var color = d.score < 50 ? '#ef4444' : d.score < 70 ? '#f59e0b' : d.score < 85 ? '#3b82f6' : '#22c55e';
+    var label = d.score < 50 ? '⚠️ 弱项' : d.score < 70 ? '⚡ 待提升' : d.score < 85 ? '✓ 良好' : '✅ 强项';
+    html += '<div>';
+    html += '<div class="flex-between" style="font-size:0.85rem;margin-bottom:0.3rem">';
+    html += '<span><strong>' + d.name + '</strong> <span style="font-size:0.75rem;color:var(--text-muted)">' + d.count + '个</span></span>';
+    html += '<span style="font-weight:700;color:' + color + '">' + d.score + '% <span style="font-size:0.7rem;font-weight:400">' + label + '</span></span>';
+    html += '</div>';
+    html += '<div style="height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden"><div style="height:100%;width:' + d.score + '%;background:' + color + ';border-radius:3px"></div></div>';
+    // 具体 benchmark 列表
+    if (d.benchmarks && d.benchmarks.length > 0) {
+      html += '<div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-top:0.2rem">';
+      d.benchmarks.forEach(function(b) {
+        var bc = b.score < 50 ? 'var(--red)' : b.score < 70 ? 'var(--orange)' : 'var(--text-muted)';
+        html += '<span style="font-size:0.7rem;color:' + bc + ';background:var(--bg-hover);padding:0.1rem 0.4rem;border-radius:3px">' + b.name + ': ' + b.score + '%</span>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  });
+  html += '</div></div>';
+
+  // 右列：弱项 benchmark TOP 排行榜
+  html += '<div class="card">';
+  html += '<div class="card-header"><h3>🏆 弱项排行榜</h3><span class="tag" style="background:var(--red);color:#fff">最低分 TOP</span></div>';
+  var weak = mainData.weakest_benchmarks || [];
+  html += '<div style="display:flex;flex-direction:column;gap:0.5rem">';
+  weak.forEach(function(b, i) {
+    var color = b.score < 50 ? '#ef4444' : b.score < 70 ? '#f59e0b' : 'var(--text-muted)';
+    var icon = i === 0 ? '🔴' : i === 1 ? '🟠' : i === 2 ? '🟡' : '⚪';
+    html += '<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem;background:var(--bg-hover);border-radius:6px">';
+    html += '<span>' + icon + '</span>';
+    html += '<div style="flex:1;min-width:0">';
+    html += '<div style="font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + b.name + '</div>';
+    html += '<div style="font-size:0.7rem;color:var(--text-muted)">' + (b.category || '') + ' · ' + (b.correct||0) + '/' + (b.total||0) + ' 正确</div>';
+    html += '</div>';
+    html += '<div style="font-weight:700;font-size:1.1rem;color:' + color + '">' + b.score + '%</div>';
+    html += '</div>';
+  });
+  html += '</div></div>';
+
+  html += '</div>';
+
+  // ── 改进建议 ──
+  var suggestions = mainData.suggestions || [];
+  if (suggestions.length > 0) {
+    html += '<div class="card mt-1">';
+    html += '<div class="card-header"><h3>💡 改进建议</h3><span class="tag" style="background:var(--orange);color:#fff">' + suggestions.length + ' 条</span></div>';
+    html += '<div style="display:flex;flex-direction:column;gap:0.5rem">';
+    suggestions.forEach(function(s) {
+      html += '<div style="padding:0.6rem 0.8rem;background:var(--bg-hover);border-radius:6px;border-left:3px solid var(--accent);font-size:0.9rem;line-height:1.5">' + s + '</div>';
+    });
+    html += '</div></div>';
+  }
+
+  // ── 错误分布（如果有） ──
+  var errDist = mainData.error_distribution || {};
+  var errKeys = Object.keys(errDist);
+  if (errKeys.length > 0) {
+    html += '<div class="card mt-1">';
+    html += '<div class="card-header"><h3>📋 错误模式分布</h3><span class="tag" style="background:var(--blue);color:#fff">' + errKeys.length + ' 类</span></div>';
+    html += '<div style="display:flex;gap:0.8rem;flex-wrap:wrap">';
+    var totalErr = errKeys.reduce(function(s,k) { return s + errDist[k]; }, 0);
+    errKeys.forEach(function(k) {
+      var pct = Math.round(errDist[k] / totalErr * 100);
+      html += '<div style="flex:1;min-width:120px;padding:0.8rem;background:var(--bg-hover);border-radius:8px;text-align:center">';
+      html += '<div style="font-size:1.3rem;font-weight:700;color:var(--red)">' + errDist[k] + '</div>';
+      html += '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.2rem">' + k + ' (' + pct + '%)</div>';
+      html += '</div>';
+    });
+    html += '</div></div>';
+  }
+
+  // ── 对比分析（如果选了两个模型） ──
+  if (compare && data.models && data.models[compare]) {
+    var compData = data.models[compare];
+    html += '<div class="card mt-1" style="border-color:var(--accent)">';
+    html += '<div class="card-header"><h3>⚔️ 对比分析: ' + model + ' vs ' + compare + '</h3></div>';
+    html += '<div style="display:flex;flex-direction:column;gap:0.6rem">';
+    // 逐维度对比
+    var allDims = {};
+    (mainData.dimensions || []).forEach(function(d) { allDims[d.name] = d.score; });
+    (compData.dimensions || []).forEach(function(d) { allDims[d.name] = d.score; });
+    var dimOrder = ['知识理解', '数学推理', '代码能力', '推理能力', '综合能力', '中文专项', '医疗专业', '安全合规', '多模态', '多语言', '长上下文', '红队/对抗', '自定义', '其他'];
+    var sortedDims = Object.keys(allDims).sort(function(a,b) {
+      var ia = dimOrder.indexOf(a); if (ia < 0) ia = 99;
+      var ib = dimOrder.indexOf(b); if (ib < 0) ib = 99;
+      return ia - ib;
+    });
+    sortedDims.forEach(function(dim) {
+      var sA = mainData.dimensions ? (mainData.dimensions.find(function(d) { return d.name === dim; }) || {}).score : null;
+      var sB = compData.dimensions ? (compData.dimensions.find(function(d) { return d.name === dim; }) || {}).score : null;
+      if (sA === null && sB === null) return;
+      sA = sA || 0; sB = sB || 0;
+      var diff = sA - sB;
+      var diffColor = diff > 5 ? 'var(--green)' : diff < -5 ? 'var(--red)' : 'var(--text-muted)';
+      var diffSign = diff > 0 ? '+' : '';
+      html += '<div>';
+      html += '<div class="flex-between" style="font-size:0.85rem;margin-bottom:0.25rem">';
+      html += '<strong>' + dim + '</strong>';
+      html += '<span>' + model + ': <strong>' + sA + '%</strong>  vs  ' + compare + ': <strong>' + sB + '%</strong>  <span style="color:' + diffColor + ';font-weight:600">(' + diffSign + Math.round(diff) + ')</span></span>';
+      html += '</div>';
+      // 双条对比
+      html += '<div style="height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden;position:relative">';
+      html += '<div style="position:absolute;height:100%;width:' + Math.max(sA, sB) + '%;background:transparent;border-radius:3px"></div>';
+      html += '<div style="height:3px;width:' + sB + '%;background:#6366f1;border-radius:3px;opacity:0.7"></div>';
+      html += '<div style="height:3px;width:' + sA + '%;background:#00D4E0;border-radius:3px;margin-top:-3px"></div>';
+      html += '</div>';
+      html += '</div>';
+    });
+    html += '</div></div>';
+  }
+
+  results.innerHTML = html;
+  results.style.display = 'block';
+  results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+</script>
+{% endblock %}

@@ -76,10 +76,10 @@
 <!-- 雷达对比图 -->
 <div class="card">
   <div class="card-header">
-    <h3>五维能力雷达对比</h3>
-    <span class="tag">Compare</span>
+    <h3>🧠 能力维度雷达对比</h3>
+    <span class="tag" style="background:var(--accent);color:#fff">按类别聚合</span>
   </div>
-  <div class="chart-container" style="min-height:340px">
+  <div class="chart-container" style="min-height:380px">
     <canvas id="compareRadar"></canvas>
   </div>
 </div>
@@ -142,21 +142,26 @@
       <tbody id="compareTable">
         {% set a = models[0] %}
         {% set b = models[1] if models|length > 1 else models[0] %}
+        {% set ns = namespace(shown=0) %}
         {% for bm in benchmarks %}
-        {% set sa = a.scores.get(bm.id, '—') %}
-        {% set sb = b.scores.get(bm.id, '—') %}
-        {% set san = sa is number and sa %}
-        {% set sbn = sb is number and sb %}
+        {% set sa = a.scores.get(bm.id) %}
+        {% set sb = b.scores.get(bm.id) %}
+        {% if sa is number or sb is number %}
+        {% set ns.shown = ns.shown + 1 %}
         <tr>
           <td><strong>{{ bm.name }}</strong></td>
           <td style="color:var(--text-muted)">{{ bm.category }}</td>
-          <td class="score-cell {% if san and sa >= 90 %}high{% elif san and sa >= 80 %}mid{% else %}low{% endif %}">{{ sa }}</td>
-          <td class="score-cell {% if sbn and sb >= 90 %}high{% elif sbn and sb >= 80 %}mid{% else %}low{% endif %}">{{ sb }}</td>
+          <td class="score-cell {% if sa is number and sa >= 90 %}high{% elif sa is number and sa >= 80 %}mid{% elif sa is number %}low{% else %}text-muted{% endif %}">{{ sa if sa is number else '—' }}</td>
+          <td class="score-cell {% if sb is number and sb >= 90 %}high{% elif sb is number and sb >= 80 %}mid{% elif sb is number %}low{% else %}text-muted{% endif %}">{{ sb if sb is number else '—' }}</td>
           <td style="color:{% if sa is number and sb is number and sa > sb %}var(--green){% elif sa is number and sb is number and sb > sa %}var(--orange){% else %}var(--text-muted){% endif %};font-weight:600">
             {% if sa is number and sb is number and sa > sb %}+{{ sa - sb }}{% elif sa is number and sb is number and sb > sa %}-{{ sb - sa }}{% else %}—{% endif %}
           </td>
         </tr>
+        {% endif %}
         {% endfor %}
+        {% if ns.shown == 0 %}
+        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:2rem">暂无评测数据，请先运行评测</td></tr>
+        {% endif %}
       </tbody>
     </table>
   </div>
@@ -203,7 +208,9 @@
     document.getElementById('headerB').textContent = mB.name;
 
     const tbody = document.getElementById('compareTable');
-    tbody.innerHTML = BENCHMARKS.map(bm => {
+    tbody.innerHTML = BENCHMARKS
+      .filter(function(bm) { return mA.scores[bm.id] !== undefined || mB.scores[bm.id] !== undefined; })
+      .map(function(bm) {
       const sa = mA.scores[bm.id];
       const sb = mB.scores[bm.id];
       const diff = sa - sb;

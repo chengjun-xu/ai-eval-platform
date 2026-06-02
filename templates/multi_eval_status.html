@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}评测运行状态{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>🚀 多模型评测运行中</h2>
+    <p>{{ run_ids|length }} 个评测任务已启动，正在并行执行...</p>
+  </div>
+  <div>
+    <a href="{{ url_for('history_page') }}" class="btn-primary" style="display:inline-block;width:auto;padding:0.5rem 1.2rem;text-decoration:none">📋 查看历史</a>
+  </div>
+</div>
+
+<div class="multi-run-grid" id="multiRunGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1rem">
+  {% for rid in run_ids %}
+  <div class="card run-card" data-run-id="{{ rid }}" style="border-color:var(--border);transition:border-color 0.3s">
+    <div class="card-header">
+      <h3 style="font-size:1rem" id="model-name-{{ rid }}">⏳ {{ model_names.get(rid, '模型') }}</h3>
+      <span id="status-badge-{{ rid}}" class="tag" style="background:var(--accent);color:#fff">运行中</span>
+    </div>
+    <div style="text-align:center;padding:1rem 0">
+      <div style="font-size:3rem;margin-bottom:0.5rem" id="icon-{{ rid }}">⏳</div>
+      <div id="progress-text-{{ rid }}" style="font-size:0.85rem;color:var(--text-muted)">初始化...</div>
+    </div>
+    <div style="margin-bottom:0.5rem">
+      <div class="flex-between" style="font-size:0.8rem;color:var(--text-muted)">
+        <span id="elapsed-{{ rid }}">⏱ 0s</span>
+        <span id="pct-{{ rid }}">0%</span>
+      </div>
+      <div style="height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden">
+        <div id="bar-{{ rid }}" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent-hover));border-radius:3px;transition:width 0.5s ease"></div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
+      <button onclick="togglePause('{{ rid }}')" class="pause-btn" data-rid="{{ rid }}" style="font-size:0.72rem;padding:0.2rem 0.5rem;background:var(--orange);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap">⏸️</button>
+      <button onclick="cancelEval('{{ rid }}')" style="font-size:0.72rem;padding:0.2rem 0.5rem;background:var(--red);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap">🛑</button>
+      <a id="link-{{ rid }}" href="{{ url_for('eval_status', run_id=rid) }}" style="font-size:0.8rem;color:var(--accent)">详情 →</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<p style="text-align:center;color:var(--text-muted);font-size:0.85rem;margin-top:1.5rem">页面每 3 秒自动刷新 · 评测完成后自动跳转</p>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const RUN_IDS = {{ run_ids_json | safe }};
+
+function pollAll() {
+  var allDone = true;
+  var doneCount = 0;
+  RUN_IDS.forEach(function(rid) {
+    fetch('/api/eval/status/' + rid)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var card = document.querySelector('.run-card[data-run-id="' + rid + '"]');
+        var bar = document.getElementById('bar-' + rid);
+        var pct = document.getElementById('pct-' + rid);
+        var progText = document.getElementById('progress-text-' + rid);
+        var elapsed = document.getElementById('elapsed-' + rid);
+        var icon = document.getElementById('icon-' + rid);
+        var badge = document.getElementById('status-badge-' + rid);
+        var link = document.getElementById('link-' + rid);
+
+        if (bar) bar.style.width = (data.progress || 0) + '%';
+        if (pct) pct.textContent = (data.progress || 0) + '%';
+        if (data.message && progText) progText.textContent = data.message;
+        if (elapsed && data.elapsed !== undefined) elapsed.textContent = '⏱ ' + data.elapsed + 's';
+
+        if (data.status === 'completed') {
+          doneCount++;
+          if (icon) icon.textContent = '✅';
+          if (badge) { badge.textContent = '完成'; badge.style.background = '#22c55e'; }
+          if (progText) progText.textContent = '得分: ' + (data.overall_score || 0) + '% (' + (data.overall_correct || 0) + '/' + (data.overall_total || 0) + ')';
+          if (bar) bar.style.width = '100%';
+          if (pct) pct.textContent = '100%';
+          if (card) card.style.borderColor = '#22c55e';
+          // 更新模型名
+          var nameEl = document.getElementById('model-name-' + rid);
+          if (nameEl && data.model_name) nameEl.textContent = '✅ ' + data.model_name;
+          // 链接改为查看报告
+          if (link) link.href = '/report/' + encodeURIComponent(data.model_name || '') + '?run_id=' + rid;
+          if (link) link.textContent = '查看报告 →';
+        } else if (data.status === 'failed') {
+          doneCount++;
+          if (icon) icon.textContent = '❌';
+          if (badge) { badge.textContent = '失败'; badge.style.background = '#ef4444'; }
+          if (progText) progText.textContent = data.message || '评测失败';
+          if (card) card.style.borderColor = '#ef4444';
+          var nameEl = document.getElementById('model-name-' + rid);
+          if (nameEl && data.model_name) nameEl.textContent = '❌ ' + data.model_name;
+        } else if (data.status === 'cancelled') {
+          doneCount++;
+          if (icon) icon.textContent = '🛑';
+          if (badge) { badge.textContent = '已终止'; badge.style.background = '#ef4444'; }
+          if (progText) progText.textContent = '已终止（无保留数据）';
+          if (card) card.style.borderColor = '#ef4444';
+          var nameEl = document.getElementById('model-name-' + rid);
+          if (nameEl && data.model_name) nameEl.textContent = '🛑 ' + data.model_name;
+        } else {
+          allDone = false;
+          // 运行中：不覆盖模型名（首次渲染已正确显示）
+        }
+      });
+  });
+
+  if (allDone) {
+    setTimeout(function() {
+      // 全部完成时显示完成动画后重定向到历史
+      var remaining = document.querySelectorAll('.run-card[style*="border-color"]').length;
+      // 继续轮询直到全部卡片完成
+    }, 5000);
+  }
+  setTimeout(pollAll, 3000);
+}
+setTimeout(pollAll, 1500);
+
+// 暂停/恢复
+function togglePause(runId) {
+  var btn = document.querySelector('.pause-btn[data-rid="' + runId + '"]');
+  var isPaused = btn.textContent.trim() === '▶️';
+  var url = isPaused ? '/api/eval/resume/' : '/api/eval/pause/';
+  fetch(url + runId, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        btn.textContent = isPaused ? '⏸️' : '▶️';
+        btn.style.background = isPaused ? 'var(--orange)' : 'var(--accent)';
+      } else {
+        alert(data.error || '操作失败');
+      }
+    })
+    .catch(function() { alert('请求失败'); });
+}
+
+// 终止
+function cancelEval(runId) {
+  if (!confirm('确定要终止此评测吗？所有已完成的题目数据将被清除。')) return;
+  fetch('/api/eval/cancel/' + runId, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        var card = document.querySelector('.run-card[data-run-id="' + runId + '"]');
+        if (card) { card.style.opacity = '0.5'; }
+        // 轮询等待状态变更
+        var cancelFallback = 0;
+        var cancelWatcher = setInterval(function() {
+          fetch('/api/eval/status/' + runId)
+            .then(function(r2) { return r2.json(); })
+            .then(function(s) {
+              if (s.status === 'cancelled') {
+                clearInterval(cancelWatcher);
+                location.reload();
+              }
+              cancelFallback++;
+              if (cancelFallback > 30) {
+                clearInterval(cancelWatcher);
+                location.reload();
+              }
+            })
+            .catch(function() {
+              cancelFallback++;
+              if (cancelFallback > 30) location.reload();
+            });
+        }, 3000);
+      } else {
+        alert(data.error || '操作失败');
+      }
+    })
+    .catch(function() { alert('请求失败'); });
+}
+</script>
+{% endblock %}

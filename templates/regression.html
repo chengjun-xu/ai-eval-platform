@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}回归检测{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h2>📉 回归检测</h2>
+    <p>双样本 Bootstrap 检验，检测模型版本间的性能衰退</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>选择对比评测</h3>
+    <span class="tag">Regression</span>
+  </div>
+  <form id="regressionForm" onsubmit="return false;">
+    <div class="row" style="grid-template-columns: 1fr 1fr">
+      <div>
+        <label style="font-size:0.85rem;color:var(--text-secondary);display:block;margin-bottom:0.3rem">基线（旧版本/较好版本）</label>
+        <select id="runA" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+          <option value="">— 选择评测记录 —</option>
+          {% for r in runs %}
+          <option value="{{ r.run_id }}">{{ r.model_name }} — {{ r.completed_at[:16] if r.completed_at else '?' }} ({{ r.overall_score }}分)</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label style="font-size:0.85rem;color:var(--text-secondary);display:block;margin-bottom:0.3rem">对比（新版本/待验证版本）</label>
+        <select id="runB" style="width:100%;padding:0.5rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary)">
+          <option value="">— 选择评测记录 —</option>
+          {% for r in runs %}
+          <option value="{{ r.run_id }}">{{ r.model_name }} — {{ r.completed_at[:16] if r.completed_at else '?' }} ({{ r.overall_score }}分)</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <button type="button" class="btn-primary" onclick="detectRegression()" style="margin-top:1rem;width:auto;padding:0.5rem 2rem">📊 检测回归</button>
+  </form>
+</div>
+
+<!-- 结果 -->
+<div id="resultArea" style="display:none">
+  <div class="card mt-1">
+    <div class="card-header">
+      <h3 id="resultTitle">回归分析结果</h3>
+      <span class="tag" id="summaryBadge">—</span>
+    </div>
+    <div id="summaryCards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1rem"></div>
+    <div id="regressionDetails"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function detectRegression() {
+  const runA = document.getElementById('runA').value;
+  const runB = document.getElementById('runB').value;
+  if (!runA || !runB) { alert('请选择两次评测'); return; }
+
+  document.getElementById('resultArea').style.display = 'block';
+  document.getElementById('resultTitle').textContent = '⏳ 分析中...';
+
+  const resp = await fetch('/api/regression/detect', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({run_id_a: runA, run_id_b: runB})
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); return; }
+
+  const s = data.summary;
+  document.getElementById('resultTitle').textContent = `回归分析: ${data.model_a} ➔ ${data.model_b}`;
+  document.getElementById('summaryBadge').textContent = `Δ${s.overall_delta > 0 ? '+' : ''}${s.overall_delta}分`;
+
+  document.getElementById('summaryCards').innerHTML = `
+    <div class="stat-card"><div class="stat-value" style="color:var(--orange)">${s.total_regressed}</div><div class="stat-label">回归项</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:var(--accent)">${s.total_improved}</div><div class="stat-label">改善项</div></div>
+    <div class="stat-card"><div class="stat-value">${s.unchanged}</div><div class="stat-label">未变化</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:var(--orange)">${s.avg_decline}</div><div class="stat-label">平均降幅(分)</div></div>
+  `;
+
+  // 回归详情
+  let html = '';
+  if (data.regressions.length > 0) {
+    html += '<h4 style="color:var(--orange)">⚠️ 回归项</h4>';
+    data.regressions.forEach(r => {
+      html += `<div style="padding:0.6rem;border-left:3px solid var(--orange);margin-bottom:0.5rem;background:var(--bg-card);border-radius:var(--radius-sm)">
+        <strong>${r.benchmark}</strong>
+        <div style="font-size:0.85rem;color:var(--text-secondary)">${r.score_a}% → ${r.score_b}% <strong style="color:var(--orange)">(${r.decline > 0 ? '-' : '+'}${Math.abs(r.decline)})</strong> p=${r.p_value} ${r.significant ? '⚠️' : ''}</div>
+      </div>`;
+    });
+  }
+  if (data.improvements.length > 0) {
+    html += '<h4 style="color:var(--accent);margin-top:1rem">✅ 改善项</h4>';
+    data.improvements.forEach(r => {
+      html += `<div style="padding:0.6rem;border-left:3px solid var(--accent);margin-bottom:0.5rem;background:var(--bg-card);border-radius:var(--radius-sm)">
+        <strong>${r.benchmark}</strong>
+        <div style="font-size:0.85rem;color:var(--text-secondary)">${r.score_a}% → ${r.score_b}% <strong style="color:var(--accent)">(+${Math.abs(r.decline)})</strong> p=${r.p_value}</div>
+      </div>`;
+    });
+  }
+  if (!html) html = '<p style="color:var(--text-muted)">✅ 未检测到显著变化</p>';
+  document.getElementById('regressionDetails').innerHTML = html;
+}
+</script>
+{% endblock %}

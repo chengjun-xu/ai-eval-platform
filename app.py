@@ -6,13 +6,118 @@ AI 大模型评测平台 - Flask Application
 import json
 import os
 import uuid
+import time as _time
 from functools import wraps
 from pathlib import Path
 
 from flask import Flask, render_template, request, redirect, session, url_for, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from eval_runner import start_eval, get_run_status, list_completed_runs, list_user_runs
+from eval_runner import start_eval, get_run_status, list_completed_runs, list_user_runs, list_running_jobs
+
+# ── HuggingFace Benchmark 注册表 ──────────────────────────────────────
+try:
+    from benchmark_registry import load_hf_benchmarks
+    HAS_HF_BENCHMARKS = True
+except ImportError:
+    HAS_HF_BENCHMARKS = False
+    def load_hf_benchmarks(): return []
+
+# ── OpenCompass 适配器 ────────────────────────────────────────────────
+try:
+    from opencompass_adapter import load_oc_benchmarks, OC_AVAILABLE, scan_oc_datasets
+    HAS_OC = OC_AVAILABLE
+except ImportError:
+    HAS_OC = False
+    def load_oc_benchmarks(): return []
+    def scan_oc_datasets(): return []
+
+# ── 数据挖掘 Pipeline ─────────────────────────────────────────────────
+try:
+    from data_mining_pipeline import mine_from_text, mine_from_file, mine_from_hf, register_as_benchmark
+    HAS_DATA_MINING = True
+except ImportError:
+    HAS_DATA_MINING = False
+    def mine_from_text(*a, **kw): return []
+    def mine_from_file(*a, **kw): return []
+    def mine_from_hf(*a, **kw): return []
+    def register_as_benchmark(*a, **kw): return ""
+
+# ── 自动化数据生产引擎 ─────────────────────────────────────────────────
+try:
+    from data_production import (
+        generate_self_instruct,
+        batch_evolve,
+        generate_rl_preference_pairs,
+        register_as_benchmark as dp_register_as_benchmark,
+    )
+    HAS_DATA_PRODUCTION = True
+except ImportError:
+    HAS_DATA_PRODUCTION = False
+    def generate_self_instruct(*a, **kw): raise NotImplementedError("data_production 模块未安装")
+    def batch_evolve(*a, **kw): raise NotImplementedError("data_production 模块未安装")
+    def generate_rl_preference_pairs(*a, **kw): raise NotImplementedError("data_production 模块未安装")
+    def dp_register_as_benchmark(*a, **kw): return ""
+
+# ── 长尾场景生成器 ───────────────────────────────────────────────────
+try:
+    from longtail_generator import LongtailGenerator, register_longtail_as_benchmark
+    HAS_LONGTAIL = True
+except ImportError:
+    HAS_LONGTAIL = False
+    class LongtailGenerator:
+        def generate(self, *a, **kw): return []
+    def register_longtail_as_benchmark(*a, **kw): return ""
+
+# ── 评测分析（回归检测 + 评分一致性）────────────────────────────────────
+try:
+    from eval_analysis import detect_regression, compare_judges, analyze_score_distribution
+    HAS_ANALYSIS = True
+except ImportError:
+    HAS_ANALYSIS = False
+    def detect_regression(*a, **kw): return {"regressions": [], "summary": {"total_regressed": 0}}
+    def compare_judges(*a, **kw): return {"pairs": {}}
+    def analyze_score_distribution(*a, **kw): return {}
+
+# ── 弱项挖掘 ─────────────────────────────────────────────────────────
+try:
+    from weakness_miner import analyze_model, compare_weaknesses, get_all_models_with_data
+    HAS_WEAKNESS_MINER = True
+except ImportError:
+    HAS_WEAKNESS_MINER = False
+    def analyze_model(*a, **kw): return {"error": "弱项挖掘模块未加载"}
+    def compare_weaknesses(*a, **kw): return {}
+    def get_all_models_with_data(*a): return []
+
+# ── 大数据集流式计数（避免加载 12MB JSON 到内存） ──────────────────────────
+
+_BENCHMARK_CACHE: dict[str, tuple[float, list]] = {}  # path -> (mtime, items_count_or_list)
+
+def _count_json_items(path: Path) -> int | list:
+    """流式统计 JSON 数组元素个数，大数据集只计数、小数据集返回列表"""
+    stat = path.stat()
+    cache_key = str(path.absolute())
+    cached = _BENCHMARK_CACHE.get(cache_key)
+    if cached and cached[0] == stat.st_mtime:
+        return cached[1]
+
+    fsize = stat.st_size
+    if fsize > 500_000:  # >500KB 快速统计行首 `{` 个数
+        count = 0
+        with open(path, "rb") as f:
+            for line in f:
+                # 统计以 { 开头的非空行（每个 JSON 对象一行）
+                stripped = line.lstrip()
+                if stripped and stripped[0:1] == b'{':
+                    count += 1
+        result = count
+    else:
+        with open(path, encoding="utf-8") as f:
+            result = json.load(f)
+            result = len(result) if isinstance(result, list) else 0
+
+    _BENCHMARK_CACHE[cache_key] = (stat.st_mtime, result)
+    return result
 import eval_agent
 import uuid
 import shutil
@@ -45,7 +150,14 @@ except ImportError:
 # 应用初始化
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
-app.secret_key = os.urandom(32).hex()
+app.secret_key = os.environ.get("EVAL_PLATFORM_SECRET")
+if not app.secret_key:
+    import warnings
+    warnings.warn(
+        "⚠ EVAL_PLATFORM_SECRET 环境变量未设置，使用生成的随机密钥（重启后会话会失效）"
+    )
+    app.secret_key = os.urandom(32).hex()
+app.config['SESSION_COOKIE_NAME'] = 'ai_eval_session'
 
 DATA_DIR = Path(__file__).parent / "data"
 MODELS_FILE = DATA_DIR / "models.json"
@@ -127,7 +239,7 @@ def delete_judge_model(model_id: str):
 
 
 def load_benchmarks() -> list:
-    """从数据集目录动态扫描可用的 Benchmark（支持 _sample 和 _extended）"""
+    """从数据集目录动态扫描可用的 Benchmark（支持 _sample、_ext、_extended）"""
     benchmarks = []
     mapping = {
         "mmlu_sample":     {"name": "MMLU",     "full_name": "Massive Multitask Language Understanding",
@@ -136,16 +248,25 @@ def load_benchmarks() -> list:
         "mmlu_extended":   {"name": "MMLU",     "full_name": "MMLU (扩展版)",
                             "category": "知识理解", "icon": "book",
                             "desc": "12个学科共50题，更全面的知识覆盖评测。"},
+        "mmlu_ext":        {"name": "MMLU",     "full_name": "MMLU (扩展版)",
+                            "category": "知识理解", "icon": "book",
+                            "desc": "12个学科共50题，更全面的知识覆盖评测。"},
         "gsm8k_sample":    {"name": "GSM8K",    "full_name": "Grade School Math 8K",
                             "category": "数学推理", "icon": "calculator",
                             "desc": "小学数学应用题评测，测试模型的数学推理与计算能力。"},
         "gsm8k_extended":  {"name": "GSM8K",    "full_name": "GSM8K (扩展版)",
                             "category": "数学推理", "icon": "calculator",
                             "desc": "22道数学应用题，覆盖加减、几何、百分比、方程等题型。"},
+        "gsm8k_ext":       {"name": "GSM8K",    "full_name": "GSM8K (扩展版)",
+                            "category": "数学推理", "icon": "calculator",
+                            "desc": "22道数学应用题，覆盖加减、几何、百分比、方程等题型。"},
         "humaneval_sample":{"name": "HumanEval","full_name": "HumanEval",
                             "category": "代码能力", "icon": "code",
                             "desc": "Python 代码生成评测，测试模型根据 docstring 编写函数的能力。"},
         "humaneval_extended":{"name": "HumanEval","full_name": "HumanEval (扩展版)",
+                              "category": "代码能力", "icon": "code",
+                              "desc": "10道 Python 编程题，覆盖数组、字符串、排序、查找等基础算法。"},
+        "humaneval_ext":    {"name": "HumanEval","full_name": "HumanEval (扩展版)",
                               "category": "代码能力", "icon": "code",
                               "desc": "10道 Python 编程题，覆盖数组、字符串、排序、查找等基础算法。"},
         "open_ended_sample":{"name": "OpenEval", "full_name": "开放题评测 (LLM-as-Judge)",
@@ -169,31 +290,71 @@ def load_benchmarks() -> list:
         "rag_eval_custom":   {"name": "RAG",     "full_name": "RAG 证据忠实性评测",
                               "category": "综合能力", "icon": "link",
                               "desc": "评估模型的 RAG 能力，包括证据忠实性、完整性和幻觉检测，覆盖医学知识、医疗政策、技术、伦理合规等场景。"},
+        # ── 官方标准化数据集 ──
+        "mmlu_official":     {"name": "MMLU",     "full_name": "MMLU (官方, 57学科)",
+                                "category": "知识理解", "icon": "book",
+                                "desc": "MMLU 官方完整测试集，57学科~14000题。可与论文对标。"},
+        "gsm8k_official":    {"name": "GSM8K",    "full_name": "GSM8K (官方)",
+                                "category": "数学推理", "icon": "calculator",
+                                "desc": "OpenAI GSM8K 官方完整测试集，~1300道小学数学应用题。"},
+        "humaneval_official":{"name": "HumanEval","full_name": "HumanEval (官方)",
+                                "category": "代码能力", "icon": "code",
+                                "desc": "OpenAI HumanEval 官方完整测试集，164道 Python 函数补全题。"},
+        # ── 多轮对话 ──
+        "mt_bench_sample":   {"name": "MT-Bench",  "full_name": "多轮对话评测 (MT-Bench)",
+                                "category": "综合能力", "icon": "message-circle",
+                                "desc": "8个场景×2轮对话，评估模型的多轮对话连贯性和回答质量。需要配置 Judge 模型。"},
+        # ── 医疗评测数据集 (项目一) ──
+        "med_medical_r1_official": {"name": "Med-R1", "full_name": "医疗开放题评测 (Medical-R1)",
+                                    "category": "医疗专业", "icon": "heart",
+                                    "desc": "从 Medical-R1-Distill 数据挖掘的198道医疗开放题，覆盖疾病诊断、治疗方案、检查解读等。含完整推理链可供分析。"},
+        "med_longtail_official":   {"name": "Med长尾", "full_name": "医疗长尾场景评测",
+                                    "category": "医疗专业", "icon": "alert-triangle",
+                                    "desc": "7类长尾场景测试集：矛盾信息、罕见并发症、多病共存、信息不完整、特殊人群、伦理困境、过时指南。专门捕捉极端/复杂指令下的模型失效点。"},
+        "med_clinical_mcq_official":{"name": "Med临床", "full_name": "临床选择题评测",
+                                     "category": "医疗专业", "icon": "clipboard",
+                                     "desc": "10道高难度临床选择题，涵盖矛盾诊断、罕见并发症、多病共存用药、特殊人群手术决策等长尾场景。"},
     }
-    for fname in sorted(DATASETS_DIR.glob("*_extended.json")) + sorted(DATASETS_DIR.glob("*_sample.json")) + sorted(DATASETS_DIR.glob("*_custom.json")):
-        # _extended → _sample → _custom 优先级
+    for fname in sorted(DATASETS_DIR.glob("*_official.json")) + sorted(DATASETS_DIR.glob("*_ext.json")) + sorted(DATASETS_DIR.glob("*_extended.json")) + sorted(DATASETS_DIR.glob("*_sample.json")) + sorted(DATASETS_DIR.glob("*_custom.json")):
+        # _ext / _extended → _sample → _custom 优先级
         key = fname.stem
-        info = mapping.get(key, {"name": key.replace("_custom","").replace("_sample","").replace("_extended","").title(), "category": "自定义"})
-        with open(fname, encoding="utf-8") as f:
-            items = json.load(f)
+        info = mapping.get(key, {"name": key.replace("_custom","").replace("_sample","").replace("_extended","").replace("_ext","").title(), "category": "自定义"})
+        # 大数据集用流式计数，不加载全文件
+        items = _count_json_items(fname)
         # 判断版本
-        if "_extended" in key:
+        if "_official" in key:
+            version = "官方标准"
+        elif "_ext" in key or "_extended" in key:
             version = "扩展版"
         elif "_custom" in key:
             version = "自定义"
         else:
             version = "基础版"
-        info_name = info.get("name", key.replace("_custom","").replace("_sample","").replace("_extended",""))
+        info_name = info.get("name", key.replace("_custom","").replace("_sample","").replace("_extended","").replace("_ext","").replace("_official",""))
+        count = items if isinstance(items, int) else len(items)
         benchmarks.append({
-            "id": key.replace("_sample", "").replace("_extended", "").replace("_custom", "") + ("_ext" if "_extended" in key else "") + ("_custom" if "_custom" in key else ""),
+            "id": key.replace("_sample", "").replace("_extended", "").replace("_custom", "").replace("_official", "") + ("_ext" if "_extended" in key else "") + ("_custom" if "_custom" in key else "") + ("_official" if "_official" in key else ""),
             "name": info_name,
             "version": version,
             "full_name": info.get("full_name", info_name),
             "category": info.get("category", "自定义"),
             "icon": info.get("icon", "file"),
-            "description": info.get("desc", f"自定义数据集，共 {len(items)} 题"),
-            "question_count": len(items),
+            "description": info.get("desc", f"自定义数据集，共 {count} 题"),
+            "question_count": count,
+            "source": "local",
         })
+    # ── 追加 HuggingFace Benchmark ──────────────────────────────────
+    if HAS_HF_BENCHMARKS:
+        existing_ids = {b["id"] for b in benchmarks}
+        for hfb in load_hf_benchmarks():
+            if hfb["id"] not in existing_ids:
+                benchmarks.append(hfb)
+    # ── 追加 OpenCompass Benchmark ──────────────────────────────────
+    if HAS_OC:
+        existing_ids = {b["id"] for b in benchmarks}
+        for ocb in load_oc_benchmarks():
+            if ocb["id"] not in existing_ids:
+                benchmarks.append(ocb)
     return benchmarks
 
 # ---------------------------------------------------------------------------
@@ -246,6 +407,9 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if "user" not in session:
+            # API 路由返回 JSON，避免 fetch 收到 HTML 导致解析失败
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "未登录，请刷新页面后重试"}), 401
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
@@ -394,6 +558,11 @@ def dashboard():
 
 
 # ---- 模型管理 --------------------------------------------------------------
+def _sanitize_models(models: list) -> list:
+    """移除 API key 后返回安全版模型列表（供前端使用）"""
+    return [{k: v for k, v in m.items() if k != "api_key"} for m in models]
+
+
 @app.route("/models")
 @login_required
 def models_page():
@@ -403,7 +572,7 @@ def models_page():
         "models.html",
         models=models,
         benchmarks=benchmarks,
-        models_json=json.dumps(models),
+        models_json=json.dumps(_sanitize_models(models)),
         benchmarks_json=json.dumps(benchmarks),
     )
 
@@ -431,6 +600,11 @@ def models_add():
 @app.route("/models/delete/<model_id>", methods=["POST"])
 @login_required
 def models_delete(model_id: str):
+    u = session["user"]
+    models = load_models()
+    target = next((m for m in models if m["id"] == model_id), None)
+    if target and target.get("user") != u:
+        return jsonify({"error": "无权删除其他用户的模型"}), 403
     delete_model(model_id)
     return redirect(url_for("models_page"))
 
@@ -460,6 +634,50 @@ def models_edit(model_id: str):
             break
     save_model(updated, u)
     return redirect(url_for("models_page"))
+
+
+# ---- Ollama 本地模型 API -----------------------------------------------------
+
+@app.route("/api/ollama/models")
+@login_required
+def ollama_list_models():
+    """检测 Ollama 是否在运行并返回可用模型列表"""
+    import urllib.request, json as _json
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/api/tags",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = _json.loads(resp.read())
+        models = [m["name"] for m in data.get("models", [])]
+        return jsonify({"online": True, "models": models})
+    except Exception:
+        return jsonify({"online": False, "models": []})
+
+
+@app.route("/api/ollama/add/<model_name>", methods=["POST"])
+@login_required
+def ollama_add_model(model_name: str):
+    """一键添加 Ollama 模型到评测平台"""
+    import json as _json
+    safe_id = model_name.replace(":", "-").replace("/", "-").replace(" ", "-")
+    new_model = {
+        "id": f"ollama-{safe_id}",
+        "name": f"Ollama {model_name}",
+        "provider": "Ollama",
+        "api_base": "http://localhost:11434/v1",
+        "api_key": "ollama",
+        "model_name": model_name,
+        "description": f"本地 Ollama 模型: {model_name}",
+        "created_at": __import__("time").strftime("%Y-%m-%d %H:%M"),
+    }
+    # 检查是否已存在
+    existing = load_models(session["user"])
+    if any(m["id"] == new_model["id"] for m in existing):
+        return jsonify({"success": False, "error": "该模型已添加"})
+    save_model(new_model, session["user"])
+    return jsonify({"success": True})
 
 
 # ---- Judge 模型管理页面 -----------------------------------------------------
@@ -501,8 +719,434 @@ def judge_models_add():
 @app.route("/judge-models/delete/<model_id>", methods=["POST"])
 @login_required
 def judge_models_delete(model_id: str):
+    u = session["user"]
+    judge_models = load_judge_models()
+    target = next((jm for jm in judge_models if jm["id"] == model_id), None)
+    if target and target.get("user") != u:
+        return jsonify({"error": "无权删除其他用户的 Judge 模型"}), 403
     delete_judge_model(model_id)
     return redirect(url_for("judge_models_page"))
+
+
+# ---------------------------------------------------------------------------
+# 数据挖掘 API
+# ---------------------------------------------------------------------------
+
+@app.route("/data-mining")
+@login_required
+def data_mining_page():
+    """数据挖掘页面"""
+    return render_template("data_mining.html")
+
+
+@app.route("/api/data-mining/text", methods=["POST"])
+@login_required
+def api_data_mining_text():
+    """从文本挖掘评测题目"""
+    data = request.get_json(force=True)
+    text = data.get("text", "")
+    strategy = data.get("strategy", "rules")
+    max_q = int(data.get("max_questions", 100))
+
+    if not text:
+        return jsonify({"error": "文本不能为空"}), 400
+
+    try:
+        results = mine_from_text(text, max_questions=max_q)
+        return jsonify({"results": results, "count": len(results)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/data-mining/file", methods=["POST"])
+@login_required
+def api_data_mining_file():
+    """从文件挖掘评测题目"""
+    if "file" not in request.files:
+        return jsonify({"error": "未选择文件"}), 400
+
+    f = request.files["file"]
+    filename = f.filename
+    if not filename:
+        return jsonify({"error": "未选择文件"}), 400
+
+    # 保存到临时目录
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix)
+    f.save(tmp.name)
+
+    try:
+        results = mine_from_file(tmp.name)
+        return jsonify({"results": results, "count": len(results), "filename": filename})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+
+@app.route("/api/data-mining/hf", methods=["POST"])
+@login_required
+def api_data_mining_hf():
+    """从 HuggingFace 数据集挖掘"""
+    data = request.get_json(force=True)
+    hf_path = data.get("hf_path", "")
+    config = data.get("config")
+    sample_size = int(data.get("sample_size", 50))
+
+    if not hf_path:
+        return jsonify({"error": "HF 路径不能为空"}), 400
+
+    try:
+        results = mine_from_hf(hf_path, config=config, sample_size=sample_size)
+        return jsonify({"results": results, "count": len(results), "hf_path": hf_path})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/data-mining/register", methods=["POST"])
+@login_required
+def api_data_mining_register():
+    """注册挖掘结果为 Benchmark"""
+    data = request.get_json(force=True)
+    benchmark_name = data.get("benchmark_name", "").strip()
+    items = data.get("items", [])
+
+    if not benchmark_name:
+        return jsonify({"error": "benchmark 名称不能为空"}), 400
+    if not items:
+        return jsonify({"error": "没有题目可注册"}), 400
+
+    try:
+        filename = register_as_benchmark(items, benchmark_name, DATASETS_DIR)
+        # 清除事件缓存
+        _BENCHMARK_CACHE.clear()
+        return jsonify({
+            "success": True,
+            "filename": filename,
+            "total": len(items),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# 长尾场景 API
+# ---------------------------------------------------------------------------
+
+@app.route("/longtail-gen")
+@login_required
+def longtail_gen_page():
+    """长尾场景生成页面"""
+    benchmarks = load_benchmarks()
+    local_benchmarks = [b for b in benchmarks if b.get("source", "local") == "local" or b.get("source") in (None, "")]
+    return render_template("longtail_gen.html", local_benchmarks=local_benchmarks)
+
+
+@app.route("/api/longtail/generate", methods=["POST"])
+@login_required
+def api_longtail_generate():
+    """生成长尾变体"""
+    data = request.get_json(force=True)
+    benchmark_id = data.get("benchmark_id", "")
+    strategies = data.get("strategies", ["negation", "numerical"])
+    variants_per_item = int(data.get("variants_per_item", 2))
+
+    if not benchmark_id:
+        return jsonify({"error": "benchmark_id 不能为空"}), 400
+
+    try:
+        from eval_runner import _load_dataset
+        items = _load_dataset(benchmark_id)
+    except Exception as e:
+        return jsonify({"error": f"加载数据集失败: {e}"}), 500
+
+    benchmarks = load_benchmarks()
+    source_name = benchmark_id
+    for b in benchmarks:
+        if b["id"] == benchmark_id:
+            source_name = b["name"]
+            break
+
+    try:
+        gen = LongtailGenerator()
+        variants = gen.generate(items, strategies=strategies,
+                                variants_per_item=variants_per_item)
+        return jsonify({"variants": variants, "count": len(variants), "source_name": source_name})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/longtail/register", methods=["POST"])
+@login_required
+def api_longtail_register():
+    """注册长尾变体为 Benchmark"""
+    data = request.get_json(force=True)
+    benchmark_name = data.get("benchmark_name", "").strip()
+    items = data.get("items", [])
+
+    if not benchmark_name:
+        return jsonify({"error": "benchmark 名称不能为空"}), 400
+    if not items:
+        return jsonify({"error": "没有题目可注册"}), 400
+
+    try:
+        from data_mining_pipeline import register_as_benchmark
+        filename = register_as_benchmark(items, benchmark_name, DATASETS_DIR)
+        _BENCHMARK_CACHE.clear()
+        return jsonify({"success": True, "filename": filename, "total": len(items)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# 自动化数据生产 API
+# ---------------------------------------------------------------------------
+
+@app.route("/data-production")
+@login_required
+def data_production_page():
+    """数据生产页面"""
+    benchmarks = load_benchmarks()
+    models = load_models(session.get("user", ""))
+    judge_models = load_judge_models(session.get("user", ""))
+    return render_template(
+        "data_production.html",
+        benchmarks=benchmarks,
+        models=models,
+        judge_models=judge_models,
+    )
+
+
+@app.route("/api/data-production/self-instruct", methods=["POST"])
+@login_required
+def api_data_production_self_instruct():
+    """Self-Instruct：从种子指令扩写生成评测数据"""
+    data = request.get_json(force=True)
+    seed_text = data.get("seed_text", "").strip()
+    seed_benchmark = data.get("seed_benchmark", "")
+    num_items = int(data.get("num_items", 10))
+    model_id = data.get("model_id", "")
+    benchmark_name = data.get("benchmark_name", "self_instruct_data").strip()
+
+    if not seed_text and not seed_benchmark:
+        return jsonify({"error": "请提供种子指令文本或选择 benchmark"}), 400
+
+    try:
+        # 获取种子指令
+        seed_items = []
+        if seed_text:
+            for line in seed_text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split("|")
+                q = parts[0].strip()
+                a = parts[1].strip() if len(parts) > 1 else ""
+                c = parts[2].strip() if len(parts) > 2 else "通用"
+                if q:
+                    seed_items.append({"question": q, "answer": a, "category": c})
+        if seed_benchmark:
+            from eval_runner import _load_dataset
+            bench_items = _load_dataset(seed_benchmark)
+            for item in bench_items[:20]:
+                seed_items.append({
+                    "question": item.get("question", ""),
+                    "answer": item.get("answer", ""),
+                    "category": item.get("category", "通用"),
+                })
+
+        if not seed_items:
+            return jsonify({"error": "无法获取种子指令"}), 400
+
+        models_list = load_models(session.get("user", ""))
+        model = next((m for m in models_list if m["id"] == model_id), None)
+        if not model:
+            return jsonify({"error": "模型不存在"}), 400
+
+        from data_production import generate_self_instruct_and_register
+        result = generate_self_instruct_and_register(
+            seed_items, model, benchmark_name, DATASETS_DIR,
+            num_items=num_items,
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/data-production/evol-instruct", methods=["POST"])
+@login_required
+def api_data_production_evol_instruct():
+    """Evol-Instruct：进化增强现有 benchmark"""
+    data = request.get_json(force=True)
+    benchmark_id = data.get("benchmark_id", "")
+    strategies = data.get("strategies", ["constraints", "deepen", "reasoning_steps"])
+    count = int(data.get("count", 20))
+    model_id = data.get("model_id", "")
+    benchmark_name = data.get("benchmark_name", "evolved_data").strip()
+
+    if not benchmark_id:
+        return jsonify({"error": "请选择要进化的 benchmark"}), 400
+
+    try:
+        from eval_runner import _load_dataset
+        items = _load_dataset(benchmark_id)
+        if not items:
+            return jsonify({"error": "benchmark 数据为空"}), 400
+
+        models_list = load_models(session.get("user", ""))
+        model = next((m for m in models_list if m["id"] == model_id), None)
+        if not model:
+            return jsonify({"error": "模型不存在"}), 400
+
+        from data_production import batch_evolve_and_register
+        result = batch_evolve_and_register(
+            items, model, benchmark_name, DATASETS_DIR,
+            strategies=strategies, max_items=count,
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/data-production/synthetic-rl", methods=["POST"])
+@login_required
+def api_data_production_synthetic_rl():
+    """Synthetic Data for RL：生成偏好对"""
+    data = request.get_json(force=True)
+    instructions_text = data.get("instructions_text", "").strip()
+    benchmark_id = data.get("benchmark_id", "")
+    num_pairs = int(data.get("num_pairs", 5))
+    model_id = data.get("model_id", "")
+    judge_model_id = data.get("judge_model_id", "")
+    style_a = data.get("style_a", "详细且严谨")
+    benchmark_name = data.get("benchmark_name", "rl_preference_data").strip()
+
+    if not instructions_text and not benchmark_id:
+        return jsonify({"error": "请提供指令或选择 benchmark"}), 400
+
+    try:
+        instructions = []
+        if instructions_text:
+            instructions = [l.strip() for l in instructions_text.split("\n") if l.strip()]
+        if benchmark_id:
+            from eval_runner import _load_dataset
+            items = _load_dataset(benchmark_id)
+            for it in items:
+                q = it.get("question", "").strip()
+                if q:
+                    instructions.append(q)
+
+        if not instructions:
+            return jsonify({"error": "无法获取指令"}), 400
+
+        models_list = load_models(session.get("user", ""))
+        model = next((m for m in models_list if m["id"] == model_id), None)
+        if not model:
+            return jsonify({"error": "模型不存在"}), 400
+
+        judge_model = None
+        if judge_model_id:
+            all_judges = load_judge_models()
+            judge_model = next((jm for jm in all_judges if jm["id"] == judge_model_id), None)
+
+        from data_production import generate_rl_pairs_and_register
+        result = generate_rl_pairs_and_register(
+            instructions, model, benchmark_name, DATASETS_DIR,
+            judge_model=judge_model, num_pairs=num_pairs,
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# 回归检测 API
+# ---------------------------------------------------------------------------
+
+@app.route("/regression")
+@login_required
+def regression_page():
+    """回归检测页面"""
+    runs = list_user_runs(session["user"])
+    return render_template("regression.html", runs=runs)
+
+
+@app.route("/api/regression/detect", methods=["POST"])
+@login_required
+def api_regression_detect():
+    """检测回归"""
+    data = request.get_json(force=True)
+    run_id_a = data.get("run_id_a", "")
+    run_id_b = data.get("run_id_b", "")
+
+    runs = list_user_runs(session["user"])
+    run_a = next((r for r in runs if r.get("run_id") == run_id_a), None)
+    run_b = next((r for r in runs if r.get("run_id") == run_id_b), None)
+
+    if not run_a or not run_b:
+        return jsonify({"error": "评测记录不存在"}), 404
+
+    try:
+        result = detect_regression(run_a, run_b)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# 评分一致性 API
+# ---------------------------------------------------------------------------
+
+@app.route("/consistency")
+@login_required
+def consistency_page():
+    """评分一致性分析页面"""
+    runs = list_user_runs(session["user"])
+    return render_template("consistency.html", runs=runs)
+
+
+@app.route("/api/consistency/analyze", methods=["POST"])
+@login_required
+def api_consistency_analyze():
+    """分析评分一致性"""
+    data = request.get_json(force=True)
+    run_ids = data.get("run_ids", [])
+    if len(run_ids) < 2:
+        return jsonify({"error": "至少选择 2 次评测"}), 400
+
+    runs = list_user_runs(session["user"])
+    selected = [r for r in runs if r.get("run_id") in run_ids]
+
+    judge_results = {}
+    for r in selected:
+        name = r.get("model_name", "未知")
+        for bid, bd in r.get("benchmarks", {}).items():
+            details = bd.get("details", [])
+            if details and any(d.get("judge_score") for d in details):
+                if name not in judge_results:
+                    judge_results[name] = []
+                judge_results[name].extend(details)
+
+    if len(judge_results) < 1:
+        return jsonify({"error": "没有 Judge 评分数据可分析"}), 400
+
+    try:
+        if len(judge_results) >= 2:
+            result = compare_judges(judge_results)
+        else:
+            # 只有一个 Judge，只做分布分析
+            name = list(judge_results.keys())[0]
+            result = {
+                "pairs": {},
+                "distributions": {name: analyze_score_distribution(judge_results[name])},
+                "judges": [name],
+            }
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ---- Benchmark 评测页面 ----------------------------------------------------
@@ -525,26 +1169,85 @@ def benchmarks_page():
 @login_required
 def eval_run():
     u = session["user"]
-    model_id = request.form.get("model_id", "").strip()
+    model_ids = request.form.getlist("model_ids")
     benchmark_ids = request.form.getlist("benchmarks")
     judge_model_id = request.form.get("judge_model_id", "").strip()
     quick_mode = request.form.get("quick_mode", "") == "on"
 
-    if not model_id or not benchmark_ids:
-        return jsonify({"error": "请选择模型和至少一个 Benchmark"}), 400
+    if not model_ids or not benchmark_ids:
+        return jsonify({"error": "请选择至少一个模型和至少一个 Benchmark"}), 400
 
     models = load_models(u)
-    model = next((m for m in models if m["id"] == model_id), None)
-    if not model:
-        return jsonify({"error": "模型不存在"}), 404
+    selected_models = [m for m in models if m["id"] in model_ids]
+    if not selected_models:
+        return jsonify({"error": "所选模型不存在"}), 404
 
     judge_model = None
     if judge_model_id:
         judge_models = load_judge_models(u)
         judge_model = next((jm for jm in judge_models if jm["id"] == judge_model_id), None)
 
-    run_id = start_eval(model, benchmark_ids, judge_model, quick_mode=quick_mode, user=session["user"])
-    return redirect(url_for("eval_status", run_id=run_id))
+    run_ids = []
+    for model in selected_models:
+        run_id = start_eval(model, benchmark_ids, judge_model, quick_mode=quick_mode, user=u)
+        run_ids.append(run_id)
+
+    if len(run_ids) == 1:
+        return redirect(url_for("eval_status", run_id=run_ids[0]))
+    else:
+        return redirect(url_for("multi_eval_status", run_ids=",".join(run_ids)))
+
+
+@app.route("/eval/multi-status/<run_ids>")
+@login_required
+def multi_eval_status(run_ids: str):
+    """多模型评测进度页面"""
+    ids = [rid.strip() for rid in run_ids.split(",") if rid.strip()]
+    # 获取每个 run_id 对应的模型名（立即显示，不等轮询）
+    model_names = {}
+    for rid in ids:
+        try:
+            status = get_run_status(rid)
+            if status and status.get("model_name"):
+                model_names[rid] = status["model_name"]
+            else:
+                model_names[rid] = "模型"
+        except Exception:
+            model_names[rid] = "模型"
+    return render_template(
+        "multi_eval_status.html",
+        run_ids=ids,
+        run_ids_json=json.dumps(ids),
+        model_names=model_names,
+    )
+
+
+# ---- 弱项挖掘 ----------------------------------------------------------------
+@app.route("/weakness")
+@login_required
+def weakness_page():
+    """弱项挖掘页面"""
+    models = get_all_models_with_data(session["user"])
+    return render_template("weakness.html", models_with_data=models)
+
+
+@app.route("/api/weakness/analyze")
+@login_required
+def api_weakness_analyze():
+    """分析模型弱项"""
+    model = request.args.get("model", "").strip()
+    compare = request.args.get("compare", "").strip()
+    if not model:
+        return jsonify({"error": "请指定模型"}), 400
+
+    try:
+        if compare:
+            result = compare_weaknesses([model, compare], user=session["user"])
+        else:
+            result = analyze_model(model, user=session["user"])
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ---- 评测进度 / 结果 -------------------------------------------------------
@@ -565,6 +1268,114 @@ def api_eval_status(run_id: str):
     if status is None:
         return jsonify({"status": "not_found"})
     return jsonify(status)
+
+
+@app.route("/api/running-jobs")
+@login_required
+def api_running_jobs():
+    """返回当前所有运行中的评测任务"""
+    jobs = list_running_jobs()
+    # 按用户过滤（如果有 user 字段）
+    u = session.get("user", "")
+    if u:
+        jobs = [j for j in jobs if j.get("user", "") == u or not j.get("user")]
+    return jsonify(jobs)
+
+
+@app.route("/api/eval/cancel/<run_id>", methods=["POST"])
+@login_required
+def api_eval_cancel(run_id: str):
+    """终止正在运行的评测"""
+    from eval_runner import _running_jobs, get_run_status, _lock as er_lock
+    status = get_run_status(run_id)
+    if status is None:
+        return jsonify({"ok": False, "error": "评测不存在"}), 404
+    if status.get("status") not in ("pending", "running"):
+        return jsonify({"ok": False, "error": "评测不在运行中"}), 400
+    with er_lock:
+        if run_id in _running_jobs:
+            _running_jobs[run_id]["cancelled"] = True
+            _running_jobs[run_id]["message"] = "用户已请求终止..."
+
+    # 启动看门狗：12秒后如果还没终止完成，由看门狗直接强制清理
+    import threading as _td
+    def _watchdog():
+        import time as _tm
+        _tm.sleep(12)
+        from eval_runner import _completed_results, _lock as er_lock2, _running_jobs as _rj, _save_run, DATA_DIR
+        with er_lock2:
+            job = _rj.get(run_id, {})
+            if job.get("status") in ("pending", "running"):
+                # 看门狗强制清理
+                forced = {
+                    "status": "cancelled",
+                    "model_id": job.get("model_id", ""),
+                    "model_name": job.get("model_name", ""),
+                    "benchmarks": {},
+                    "overall_score": 0,
+                    "overall_correct": 0,
+                    "overall_total": 0,
+                    "completed_at": _tm.strftime("%Y-%m-%d %H:%M:%S"),
+                    "elapsed": round(_tm.time() - job.get("_start_ts", _tm.time())),
+                    "message": "已强制终止（API调用超时，等待结束）",
+                }
+                _completed_results[run_id] = forced
+                _rj[run_id]["status"] = "cancelled"
+                _rj[run_id]["progress"] = 100
+                _rj[run_id]["message"] = "已强制终止"
+                _rj[run_id]["cancelled_done"] = True
+                # 清理 eval_runs.json
+                runs_file = DATA_DIR / "eval_runs.json"
+                if runs_file.exists():
+                    try:
+                        with open(runs_file, encoding="utf-8") as f:
+                            runs = json.load(f)
+                        runs = [r for r in runs if r.get("run_id") != run_id]
+                        with open(runs_file, "w", encoding="utf-8") as f:
+                            json.dump(runs, f, ensure_ascii=False, indent=2)
+                    except (json.JSONDecodeError, IOError):
+                        pass
+    _td.Thread(target=_watchdog, daemon=True).start()
+
+    return jsonify({"ok": True, "message": "已请求终止评测"})
+
+
+@app.route("/api/eval/pause/<run_id>", methods=["POST"])
+@login_required
+def api_eval_pause(run_id: str):
+    """暂停正在运行的评测"""
+    from eval_runner import _running_jobs, get_run_status, _lock as er_lock
+    status = get_run_status(run_id)
+    if status is None:
+        return jsonify({"ok": False, "error": "评测不存在"}), 404
+    if status.get("status") not in ("pending", "running"):
+        return jsonify({"ok": False, "error": "评测不在运行中"}), 400
+    with er_lock:
+        if run_id in _running_jobs:
+            # 冻结当前已用时间
+            job = _running_jobs[run_id]
+            ts = job.get("_start_ts")
+            job["_paused_elapsed"] = round(time.time() - ts) if ts else 0
+            job["paused"] = True
+            job["message"] = "已暂停"
+    return jsonify({"ok": True, "message": "评测已暂停"})
+
+
+@app.route("/api/eval/resume/<run_id>", methods=["POST"])
+@login_required
+def api_eval_resume(run_id: str):
+    """恢复已暂停的评测"""
+    from eval_runner import _running_jobs, get_run_status, _lock as er_lock
+    status = get_run_status(run_id)
+    if status is None:
+        return jsonify({"ok": False, "error": "评测不存在"}), 404
+    if not status.get("paused"):
+        return jsonify({"ok": False, "error": "评测未处于暂停状态"}), 400
+    with er_lock:
+        if run_id in _running_jobs:
+            _running_jobs[run_id]["paused"] = False
+            _running_jobs[run_id]["message"] = "恢复中..."
+    return jsonify({"ok": True, "message": "评测已恢复"})
 
 
 # ---- 历史记录 --------------------------------------------------------------
@@ -626,15 +1437,21 @@ def history_page():
 ICONS = {"MMLU": "🧠", "GSM8K": "🔢", "HumanEval": "💻", "OpenEval": "📝", "SAFETY": "🛡️", "SAFEGUARD": "🛡️", "MEDQA": "🏥", "C-EVAL": "🇨🇳", "AGENT": "🤖", "RAG": "🔗"}
 
 @app.route("/report/<model_name>")
+@app.route("/report/<model_name>/<run_id>")
 @login_required
-def report(model_name: str):
+def report(model_name: str, run_id: str = "") -> str:
     runs = list_user_runs(session["user"])
-    # 过滤出该模型的所有运行
-    model_runs = [r for r in runs if r.get("model_name", "") == model_name]
+    # 如果指定了 run_id，只取该次运行
+    if run_id:
+        model_runs = [r for r in runs if r.get("run_id") == run_id]
+    else:
+        # 兼容旧链接：取该模型的最新一次运行
+        model_runs = [r for r in runs if r.get("model_name", "") == model_name][-1:]
     if not model_runs:
         return render_template("report.html", model_name=model_name, overall_score=0,
                                overall_correct=0, overall_total=0, benchmarks_summary=[],
                                bad_cases=[], run_history=[], chart_labels=[], chart_scores=[],
+                               benchmarks_json="[]",
                                report_date="—", runs_count=0, benchmarks_count=0,
                                total_elapsed=0, error_categories={}, icons=ICONS)
 
@@ -734,6 +1551,7 @@ def report(model_name: str):
             name = bs["name"]
             bid = bench_id_map.get(name.upper(), name.lower())
             candidates = [
+                datasets_dir / f"{bid}_ext.json",
                 datasets_dir / f"{bid}_extended.json",
                 datasets_dir / f"{bid}_sample.json",
                 datasets_dir / f"{bid}_custom.json",
@@ -783,6 +1601,7 @@ def report(model_name: str):
         icons=ICONS,
         contamination_reports=contamination_reports,
         attribution=attribution,
+        benchmarks_json=json.dumps(load_benchmarks()),
     )
 
 
@@ -807,15 +1626,25 @@ def compare_page():
             }
 
     # 给模型添加兼容字段
+    # 为模型分配不同颜色
+    _COLOR_PALETTE = ['#6366f1', '#22c55e', '#f59e0b', '#3b82f6', '#ef4444', '#a855f7', '#ec4899']
     rich_models = []
-    for m in models:
+    for idx, m in enumerate(models):
         scores_data = model_eval_scores.get(m["name"], {})
         ci = scores_data.get("ci")
         rich_models.append({
-            **m,
+            # 排除敏感字段，显式构建
+            "id": m.get("id", ""),
+            "name": m.get("name", ""),
+            "provider": m.get("provider", ""),
+            "api_base": m.get("api_base", ""),
+            "model_name": m.get("model_name", ""),
+            "description": m.get("description", ""),
+            "created_at": m.get("created_at", ""),
+            "user": m.get("user", ""),
             "score": scores_data.get("overall_score", 0),
             "scores": scores_data.get("benchmarks", {}),
-            "color": "#6366f1",
+            "color": _COLOR_PALETTE[idx % len(_COLOR_PALETTE)],
             "cost_per_1k": "—",
             "latency_ms": "—",
             "context_window": 0,
@@ -857,6 +1686,29 @@ def compare_page():
 
 ALLOWED_DATASET_FORMATS = {"json"}
 
+def _infer_dataset_category_fast(path: Path) -> str:
+    """快速推断数据集类别（只读取 JSON 的第一个元素，不加载全文件）"""
+    try:
+        with open(path, "rb") as f:
+            header = f.read(4096)
+        if not header.strip().startswith(b"["):
+            return "未知"
+        decoder = json.JSONDecoder()
+        raw = header.decode("utf-8", errors="replace").lstrip().lstrip("[").lstrip()
+        obj, _ = decoder.raw_decode(raw)
+        if "choices" in obj and "answer" in obj:
+            return "选择题 (MMLU 格式)"
+        if "prompt" in obj and "test" in obj:
+            return "编程题 (HumanEval 格式)"
+        if "reference_answer" in obj:
+            return "开放题 (OpenEval 格式)"
+        if "answer" in obj:
+            return "数学题 (GSM8K 格式)"
+        return "通用"
+    except Exception:
+        return "无法解析"
+
+
 def _infer_dataset_category(items: list) -> str:
     """根据数据内容推断类别"""
     if not items:
@@ -876,48 +1728,61 @@ def _infer_dataset_category(items: list) -> str:
 @app.route("/datasets")
 @login_required
 def datasets_page():
-    """数据集管理页"""
-    benchmarks = load_benchmarks()
+    """数据集管理页（使用元数据缓存，避免每次全量加载大 JSON）"""
     datasets_dir = DATASETS_DIR
-    files_info = []
-    for f in sorted(datasets_dir.glob("*.json")):
-        size = f.stat().st_size
-        with open(f, encoding="utf-8") as fh:
-            try:
-                items = json.load(fh)
-                count = len(items) if isinstance(items, list) else 1
-            except Exception:
-                count = 0
-        cat = _infer_dataset_category(items) if count > 0 else "无法解析"
-        version = "扩展版" if "_extended" in f.stem else "自定义" if "_custom" in f.stem else "基础版" if "_sample" in f.stem else "标准"
-        files_info.append({
-            "name": f.name,
-            "stem": f.stem,
-            "size": f"{size/1024:.1f} KB",
-            "questions": count,
-            "category": cat,
-            "version": version,
-            "path": str(f),
-        })
+    cache_file = datasets_dir / ".datasets_cache.json"
+    
+    # 检查缓存有效性
+    cache_valid = False
+    cache = {}  # 预绑定，避免 Pyright 报错
+    if cache_file.exists():
+        try:
+            cache = json.loads(cache_file.read_text(encoding="utf-8"))
+            cache_valid = all(
+                datasets_dir.joinpath(fn).stat().st_mtime == meta["mtime"]
+                for fn, meta in cache.get("files", {}).items()
+                if datasets_dir.joinpath(fn).exists()
+            )
+        except Exception:
+            cache_valid = False
+    
+    if cache_valid:
+        files_info = cache["files_info"]
+    else:
+        # 重建缓存（只解析大 JSON 的头几个元素 + 计数）
+        files_info = []
+        for f in sorted(datasets_dir.glob("*.json")):
+            if f.name.startswith("."):
+                continue
+            fsize = f.stat().st_size
+            count_result = _count_json_items(f)
+            if isinstance(count_result, int):
+                questions = count_result
+            else:
+                questions = len(count_result)
+            cat = _infer_dataset_category_fast(f)
+            version = "扩展版" if ("_ext" in f.stem or "_extended" in f.stem) else "自定义" if "_custom" in f.stem else "基础版" if "_sample" in f.stem else "标准"
+            files_info.append({
+                "name": f.name,
+                "stem": f.stem,
+                "size": f"{fsize/1024:.1f} KB",
+                "questions": questions,
+                "category": cat,
+                "version": version,
+                "path": str(f),
+            })
+        # 持久化缓存到磁盘（服务器重启后依然有效）
+        cache_data = {
+            "files": {fi["name"]: {"mtime": datasets_dir.joinpath(fi["name"]).stat().st_mtime} for fi in files_info if fi["name"] != ".datasets_cache.json"},
+            "files_info": files_info,
+        }
+        try:
+            cache_file.write_text(json.dumps(cache_data, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
 
-    # 污染检测概览
+    # 污染检测概览移至 API（不在页面加载时执行）
     contamination_data = {}
-    if HAS_CONTAMINATION:
-        for fi in files_info:
-            if fi["questions"] > 0:
-                fpath = datasets_dir / fi["name"]
-                try:
-                    with open(fpath) as f:
-                        items = json.load(f)
-                    if isinstance(items, list) and len(items) > 0:
-                        cr = analyze_dataset(items)
-                        contamination_data[fi["name"]] = {
-                            "risk": cr.get("overall_risk", "未知"),
-                            "score": cr.get("overall_contamination_score", 0),
-                            "high_risk": cr.get("high_risk_count", 0),
-                        }
-                except Exception:
-                    pass
 
     return render_template("datasets.html", files=files_info, contamination=contamination_data)
 
@@ -1021,12 +1886,25 @@ def datasets_delete(filename: str):
 @app.route("/datasets/preview/<filename>")
 @login_required
 def datasets_preview(filename: str):
-    """预览数据集内容"""
+    """预览数据集内容（返回前5条，避免传输 13MB 全量 JSON）"""
     fpath = DATASETS_DIR / filename
     if not fpath.exists():
         return jsonify({"error": "文件不存在"}), 404
-    with open(fpath, encoding="utf-8") as f:
-        items = json.load(f)
+    try:
+        fsize = fpath.stat().st_size
+        with open(fpath, encoding="utf-8") as f:
+            items = json.load(f)
+        if not isinstance(items, list):
+            return jsonify({"error": "数据集格式错误（需要 JSON 数组）"}), 400
+        total = len(items)
+        sample = items[:5]
+        return jsonify({
+            "total": total,
+            "sample": sample,
+            "size": f"{fsize/1024:.1f} KB",
+        })
+    except Exception as e:
+        return jsonify({"error": f"解析失败: {str(e)}"}), 500
 
 
 @app.route("/datasets/edit/<filename>", methods=["POST"])
@@ -1216,4 +2094,4 @@ if __name__ == "__main__":
     print(f"  退出:  按 Ctrl+C 停止服务器")
     print("=" * 56)
     print()
-    app.run(host="127.0.0.1", port=5001, debug=True, use_reloader=False)
+    app.run(host="127.0.0.1", port=5001, debug=False)

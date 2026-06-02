@@ -24,6 +24,11 @@
   <h3 id="statusTitle">评测运行中...</h3>
   <p style="color:var(--text-secondary);margin-top:0.5rem" id="statusMessage">{{ status.message }}</p>
   
+  <!-- 已用时间 -->
+  <p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.3rem">
+    ⏱ 已用时: <span id="elapsedDisplay">{{ status.elapsed or 0 }}</span> 秒
+  </p>
+  
   <!-- 进度条 -->
   <div style="max-width:400px;margin:1.5rem auto">
     <div style="display:flex;justify-content:space-between;font-size:0.85rem;color:var(--text-muted);margin-bottom:0.4rem">
@@ -34,8 +39,32 @@
       <div id="progressBar" style="height:100%;width:{{ status.progress }}%;background:linear-gradient(90deg,var(--accent),var(--accent-hover));border-radius:4px;transition:width 0.5s ease"></div>
     </div>
   </div>
+
+  <!-- 暂停/终止按钮 -->
+  <div style="display:flex;gap:0.5rem;justify-content:center;margin-top:1rem">
+    <button id="pauseBtn" onclick="togglePause('{{ run_id }}')" class="btn-primary" style="display:inline-flex;align-items:center;gap:0.4rem;width:auto;padding:0.5rem 1.2rem;text-decoration:none;font-size:0.85rem;background:var(--orange);border-color:var(--orange)">
+      ⏸️ 暂停
+    </button>
+    <button id="cancelBtn" onclick="cancelEval('{{ run_id }}')" class="btn-primary" style="display:inline-flex;align-items:center;gap:0.4rem;width:auto;padding:0.5rem 1.2rem;text-decoration:none;font-size:0.85rem;background:var(--red);border-color:var(--red)">
+      🛑 终止
+    </button>
+  </div>
   
   <p style="font-size:0.8rem;color:var(--text-muted);margin-top:1rem">页面每 3 秒自动刷新</p>
+</div>
+
+{% elif status.status == 'cancelled' %}
+<!-- 已终止 -->
+<div class="card" style="text-align:center;padding:2.5rem;border-color:var(--red)">
+  <div style="font-size:3rem;margin-bottom:1rem">🛑</div>
+  <h3 style="color:var(--red)">评测已终止</h3>
+  <p style="color:var(--text-secondary);margin-top:0.5rem">{{ status.message }}</p>
+  <p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.3rem">
+    模型: <strong>{{ status.model_name }}</strong> · 
+    耗时: {{ status.elapsed }}秒
+  </p>
+  <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.3rem">已清除所有部分结果数据</p>
+  <a href="{{ url_for('benchmarks_page') }}" class="btn-primary" style="display:inline-block;width:auto;margin-top:1rem;padding:0.6rem 2rem;text-decoration:none">🔄 重新评测</a>
 </div>
 
 {% elif status.status == 'failed' %}
@@ -155,6 +184,8 @@ function poll() {
         document.getElementById('progressBar').style.width = data.progress + '%';
         document.getElementById('progressText').textContent = data.progress + '%';
         document.getElementById('statusMessage').textContent = data.message || '运行中...';
+        var el = document.getElementById('elapsedDisplay');
+        if (el && data.elapsed !== undefined) el.textContent = data.elapsed;
         setTimeout(poll, 3000);
       } else {
         location.reload();
@@ -163,6 +194,67 @@ function poll() {
     .catch(() => setTimeout(poll, 3000));
 }
 setTimeout(poll, 1500);
+
+// 暂停/恢复
+function togglePause(runId) {
+  var btn = document.getElementById('pauseBtn');
+  var isPaused = btn.textContent.trim().startsWith('▶');
+  var url = isPaused ? '/api/eval/resume/' : '/api/eval/pause/';
+  fetch(url + runId, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        if (isPaused) {
+          btn.innerHTML = '⏸️ 暂停';
+          btn.style.background = 'var(--orange)';
+        } else {
+          btn.innerHTML = '▶️ 继续';
+          btn.style.background = 'var(--accent)';
+        }
+      } else {
+        alert(data.error || '操作失败');
+      }
+    })
+    .catch(function() { alert('请求失败'); });
+}
+
+// 终止
+function cancelEval(runId) {
+  if (!confirm('确定要终止此评测吗？所有已完成的题目数据将被清除。')) return;
+  fetch('/api/eval/cancel/' + runId, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        document.getElementById('statusMessage').textContent = '正在终止...';
+        document.getElementById('pauseBtn').disabled = true;
+        document.getElementById('cancelBtn').disabled = true;
+        // 轮询等待状态变更，不瞎等
+        var cancelFallback = 0;
+        var cancelWatcher = setInterval(function() {
+          fetch('/api/eval/status/' + runId)
+            .then(function(r2) { return r2.json(); })
+            .then(function(s) {
+              if (s.status === 'cancelled') {
+                clearInterval(cancelWatcher);
+                location.reload();
+              }
+              cancelFallback++;
+              if (cancelFallback > 30) { // 最多等 90 秒
+                clearInterval(cancelWatcher);
+                location.reload();
+              }
+            })
+            .catch(function() {
+              cancelFallback++;
+              if (cancelFallback > 30) location.reload();
+            });
+        }, 3000);
+      } else {
+        alert(data.error || '操作失败');
+      }
+    })
+    .catch(function() { alert('请求失败'); });
+}
 </script>
 {% endif %}
 {% endblock %}
