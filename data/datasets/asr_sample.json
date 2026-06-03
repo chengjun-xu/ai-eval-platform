@@ -1,0 +1,82 @@
+[
+  {
+    "id": "asr_001",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/2/2e/%22The_three_Rs%22_%28Modern_English%29_(1_of_3).ogg",
+    "transcript": "The three Rs are reading writing and arithmetic",
+    "category": "英语短句",
+    "duration_sec": 5,
+    "difficulty": "easy"
+  },
+  {
+    "id": "asr_002",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/4/47/En-us-hello.ogg",
+    "transcript": "Hello",
+    "category": "简单单词",
+    "duration_sec": 1,
+    "difficulty": "easy"
+  },
+  {
+    "id": "asr_003",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/8/8c/En-us-world.ogg",
+    "transcript": "World",
+    "category": "简单单词",
+    "duration_sec": 1,
+    "difficulty": "easy"
+  },
+  {
+    "id": "asr_004",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/9/90/En-us-information.ogg",
+    "transcript": "Information",
+    "category": "英语单词",
+    "duration_sec": 1,
+    "difficulty": "easy"
+  },
+  {
+    "id": "asr_005",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/0/03/En-us-intelligence.ogg",
+    "transcript": "Intelligence",
+    "category": "英语单词",
+    "duration_sec": 1,
+    "difficulty": "medium"
+  },
+  {
+    "id": "asr_006",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/1/1a/En-us-artificial.ogg",
+    "transcript": "Artificial",
+    "category": "英语单词",
+    "duration_sec": 1,
+    "difficulty": "medium"
+  },
+  {
+    "id": "asr_007",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/8/88/En-us-technology.ogg",
+    "transcript": "Technology",
+    "category": "英语单词",
+    "duration_sec": 1,
+    "difficulty": "medium"
+  },
+  {
+    "id": "asr_008",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/a/a1/En-us-artificial_intelligence.ogg",
+    "transcript": "Artificial intelligence",
+    "category": "英语词组",
+    "duration_sec": 2,
+    "difficulty": "medium"
+  },
+  {
+    "id": "asr_009",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/9/9a/En-us-machine_learning.ogg",
+    "transcript": "Machine learning",
+    "category": "英语词组",
+    "duration_sec": 2,
+    "difficulty": "medium"
+  },
+  {
+    "id": "asr_010",
+    "audio": "https://upload.wikimedia.org/wikipedia/commons/d/d2/En-us-natural_language_processing.ogg",
+    "transcript": "Natural language processing",
+    "category": "英语词组",
+    "duration_sec": 2,
+    "difficulty": "medium"
+  }
+]

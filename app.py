@@ -308,6 +308,17 @@ def load_benchmarks() -> list:
         "mt_bench_sample":   {"name": "MT-Bench",  "full_name": "多轮对话评测 (MT-Bench)",
                                 "category": "综合能力", "icon": "message-circle",
                                 "desc": "8个场景×2轮对话，评估模型的多轮对话连贯性和回答质量。需要配置 Judge 模型。"},
+        # ── 多模态 VQA ──
+        "vqa_sample":        {"name": "VQA",       "full_name": "视觉问答评测 (VQA)",
+                                "category": "多模态", "icon": "image",
+                                "desc": "10道视觉问答题目，评估模型的图像理解和问答能力。使用带图文 API 的模型。"},
+        "vqa_judge_sample":  {"name": "VQA-Judge", "full_name": "视觉问答评测 (VQA + LLM Judge)",
+                                "category": "多模态", "icon": "image",
+                                "desc": "10道视觉问答题目，使用 LLM Judge 对模型回答进行综合评分。需要 Judge 模型。"},
+        # ── ASR 语音识别 ──
+        "asr_sample":        {"name": "ASR",       "full_name": "语音转写评测 (ASR)",
+                                "category": "多模态", "icon": "mic",
+                                "desc": "10道语音转写题目，评估 Whisper 类模型的语音识别准确率。使用 WER/CER 指标。"},
         # ── 医疗评测数据集 (项目一) ──
         "med_medical_r1_official": {"name": "Med-R1", "full_name": "医疗开放题评测 (Medical-R1)",
                                     "category": "医疗专业", "icon": "heart",

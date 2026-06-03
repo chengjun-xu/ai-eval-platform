@@ -39,6 +39,16 @@ except ImportError:
     def is_oc_benchmark(bid): return False
     def run_oc_eval(*a, **kw): return {}
 
+# ── 多模态评测 ─────────────────────────────────────────────────────────
+try:
+    from multimodal_eval import _eval_vqa, _eval_asr, _eval_vqa_judge
+    HAS_MULTIMODAL = True
+except ImportError:
+    HAS_MULTIMODAL = False
+    def _eval_vqa(*a, **kw): return {"score": 0, "correct": 0, "total": 0, "details": [], "is_vision": True}
+    def _eval_asr(*a, **kw): return {"score": 0, "correct": 0, "total": 0, "details": [], "is_asr": True}
+    def _eval_vqa_judge(*a, **kw): return {"score": 0, "correct": 0, "total": 0, "details": [], "is_vision": True}
+
 DATA_DIR = Path(__file__).parent / "data"
 DATASETS_DIR = DATA_DIR / "datasets"
 
@@ -1675,8 +1685,12 @@ BENCHMARK_EVALS = {
     "med_longtail": _eval_openended,
     "med_clinical_mcq": _eval_mmlu,
     # ── 多模态 VQA ──
-    "vqa": _eval_openended,
+    "vqa": _eval_vqa,
     "mmmu": _eval_mmlu,
+    # ── 多模态 VQA (带 LLM Judge) ──
+    "vqa_judge": _eval_vqa_judge,
+    # ── ASR 语音识别 ──
+    "asr": _eval_asr,
 }
 
 # 并行版注册（benchmark_id 后缀 _parallel 触发）

@@ -1,0 +1,82 @@
+[
+  {
+    "id": "vqa_001",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/600px-PNG_transparency_demonstration_1.png",
+    "question": "这张图片中包含了哪些物体？请列出至少3个。",
+    "answer": "天空、草地、自行车、树、云",
+    "category": "物体识别",
+    "difficulty": "easy"
+  },
+  {
+    "id": "vqa_002",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Cat_August_2010-4.jpg/600px-Cat_August_2010-4.jpg",
+    "question": "这张图片中的动物是什么颜色？",
+    "answer": "橙色（橘色、姜黄色）",
+    "category": "颜色识别",
+    "difficulty": "easy"
+  },
+  {
+    "id": "vqa_003",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/600px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg",
+    "question": "这幅画的名字是什么？",
+    "answer": "蒙娜丽莎（Mona Lisa）",
+    "category": "艺术知识",
+    "difficulty": "medium"
+  },
+  {
+    "id": "vqa_004",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Beijing_national_stadium.jpg/600px-Beijing_national_stadium.jpg",
+    "question": "图片中的建筑物通常被称为什么？",
+    "answer": "鸟巢（国家体育场）",
+    "category": "建筑识别",
+    "difficulty": "medium"
+  },
+  {
+    "id": "vqa_005",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Sydney_Opera_House_-_Dec_2008.jpg/600px-Sydney_Opera_House_-_Dec_2008.jpg",
+    "question": "这个建筑位于哪个城市？",
+    "answer": "悉尼（Sydney）",
+    "category": "建筑识别",
+    "difficulty": "easy"
+  },
+  {
+    "id": "vqa_006",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/Sunflower_sky_backdrop.jpg/600px-Sunflower_sky_backdrop.jpg",
+    "question": "图片中是什么花？",
+    "answer": "向日葵",
+    "category": "植物识别",
+    "difficulty": "easy"
+  },
+  {
+    "id": "vqa_007",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Koala_climbing_tree.jpg/600px-Koala_climbing_tree.jpg",
+    "question": "图片中的动物是什么？",
+    "answer": "考拉（树袋熊）",
+    "category": "动物识别",
+    "difficulty": "easy"
+  },
+  {
+    "id": "vqa_008",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/NCI_Visuals_Food_Table.jpg/600px-NCI_Visuals_Food_Table.jpg",
+    "question": "图片中桌子上有多少种水果？列出你能看到的。",
+    "answer": "多种水果，包括苹果、橙子、葡萄、香蕉等",
+    "category": "物体计数",
+    "difficulty": "medium"
+  },
+  {
+    "id": "vqa_009",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/Great_Wall_of_China_July_2006.jpg/600px-Great_Wall_of_China_July_2006.jpg",
+    "question": "图片展示的是哪个世界奇迹？",
+    "answer": "长城（Great Wall of China）",
+    "category": "地标识别",
+    "difficulty": "easy"
+  },
+  {
+    "id": "vqa_010",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/Shiba_inu_taiki.jpg/600px-Shiba_inu_taiki.jpg",
+    "question": "图片中的狗是什么品种？",
+    "answer": "柴犬（Shiba Inu）",
+    "category": "动物识别",
+    "difficulty": "medium"
+  }
+]
