@@ -12,6 +12,7 @@ from pathlib import Path
 
 from flask import Flask, render_template, request, redirect, session, url_for, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+import eval_agent
 
 from eval_runner import start_eval, get_run_status, list_completed_runs, list_user_runs, list_running_jobs
 
