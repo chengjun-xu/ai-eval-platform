@@ -118,11 +118,9 @@ def _count_json_items(path: Path) -> int | list:
 
     _BENCHMARK_CACHE[cache_key] = (stat.st_mtime, result)
     return result
-import eval_agent
-import uuid
-import shutil
 
-# ── 新增模块：污染检测 + 错误归因 ────────────────────────────────────────────
+
+# ---- 污染检测 + 错误归因 -----------------------------------------------------
 try:
     from contamination_detector import analyze_dataset, describe_contamination_in_report
     HAS_CONTAMINATION = True
@@ -158,6 +156,43 @@ if not app.secret_key:
     )
     app.secret_key = os.urandom(32).hex()
 app.config['SESSION_COOKIE_NAME'] = 'ai_eval_session'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 小时
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB 上传限制
+
+# ── API Key 加密 ─────────────────────────────────────────────────────────
+# 使用 EVAL_PLATFORM_SECRET 作为加密密钥，对存储的 API Key 进行简单加密
+_ENCRYPTION_KEY = (app.secret_key or os.urandom(16).hex())[:32].encode()
+
+def _encrypt_api_key(plaintext: str) -> str:
+    """简单加密 API Key（非生产级安全，防明文存储）"""
+    if not plaintext:
+        return ""
+    try:
+        from cryptography.fernet import Fernet
+        import base64
+        key = base64.urlsafe_b64encode(_ENCRYPTION_KEY.ljust(32)[:32])
+        return Fernet(key).encrypt(plaintext.encode()).decode()
+    except ImportError:
+        # 无 cryptography 库时做简单混淆
+        return "".join(chr(ord(c) ^ 0x5A) for c in plaintext)
+
+def _decrypt_api_key(ciphertext: str) -> str:
+    """解密 API Key"""
+    if not ciphertext:
+        return ""
+    try:
+        from cryptography.fernet import Fernet, InvalidToken
+        import base64
+        key = base64.urlsafe_b64encode(_ENCRYPTION_KEY.ljust(32)[:32])
+        return Fernet(key).decrypt(ciphertext.encode()).decode()
+    except (ImportError, InvalidToken):
+        # 尝试简单混淆解密（兼容旧数据）
+        try:
+            return "".join(chr(ord(c) ^ 0x5A) for c in ciphertext)
+        except (ValueError, OverflowError):
+            return ciphertext  # 可能是未加密的旧数据，原样返回
 
 DATA_DIR = Path(__file__).parent / "data"
 MODELS_FILE = DATA_DIR / "models.json"
@@ -245,30 +280,30 @@ def load_benchmarks() -> list:
         "mmlu_sample":     {"name": "MMLU",     "full_name": "Massive Multitask Language Understanding",
                             "category": "知识理解", "icon": "book",
                             "desc": "覆盖多学科的多项选择题评测，测试模型的知识广度与推理能力。"},
-        "mmlu_extended":   {"name": "MMLU",     "full_name": "MMLU (扩展版)",
+        "mmlu_extended":   {"name": "MMLU",     "full_name": "MMLU (扩展版 50题)",
                             "category": "知识理解", "icon": "book",
                             "desc": "12个学科共50题，更全面的知识覆盖评测。"},
-        "mmlu_ext":        {"name": "MMLU",     "full_name": "MMLU (扩展版)",
-                            "category": "知识理解", "icon": "book",
-                            "desc": "12个学科共50题，更全面的知识覆盖评测。"},
+        "mmlu_ext":        {"name": "MMLU-Extra","full_name": "MMLU (额外版)",
+                            "category": "知识理解", "icon": "book-plus",
+                            "desc": "拓展学科领域的额外评测题。"},
         "gsm8k_sample":    {"name": "GSM8K",    "full_name": "Grade School Math 8K",
                             "category": "数学推理", "icon": "calculator",
                             "desc": "小学数学应用题评测，测试模型的数学推理与计算能力。"},
-        "gsm8k_extended":  {"name": "GSM8K",    "full_name": "GSM8K (扩展版)",
+        "gsm8k_extended":  {"name": "GSM8K",    "full_name": "GSM8K (扩展版 22题)",
                             "category": "数学推理", "icon": "calculator",
                             "desc": "22道数学应用题，覆盖加减、几何、百分比、方程等题型。"},
-        "gsm8k_ext":       {"name": "GSM8K",    "full_name": "GSM8K (扩展版)",
-                            "category": "数学推理", "icon": "calculator",
-                            "desc": "22道数学应用题，覆盖加减、几何、百分比、方程等题型。"},
+        "gsm8k_ext":       {"name": "GSM8K-Extra","full_name": "GSM8K (额外版)",
+                            "category": "数学推理", "icon": "calculator-plus",
+                            "desc": "更多数学推理场景的额外评测题。"},
         "humaneval_sample":{"name": "HumanEval","full_name": "HumanEval",
                             "category": "代码能力", "icon": "code",
                             "desc": "Python 代码生成评测，测试模型根据 docstring 编写函数的能力。"},
-        "humaneval_extended":{"name": "HumanEval","full_name": "HumanEval (扩展版)",
+        "humaneval_extended":{"name": "HumanEval","full_name": "HumanEval (扩展版 10题)",
                               "category": "代码能力", "icon": "code",
                               "desc": "10道 Python 编程题，覆盖数组、字符串、排序、查找等基础算法。"},
-        "humaneval_ext":    {"name": "HumanEval","full_name": "HumanEval (扩展版)",
-                              "category": "代码能力", "icon": "code",
-                              "desc": "10道 Python 编程题，覆盖数组、字符串、排序、查找等基础算法。"},
+        "humaneval_ext":    {"name": "HumanEval-Extra","full_name": "HumanEval (额外版)",
+                              "category": "代码能力", "icon": "code-plus",
+                              "desc": "更多编程场景的额外代码评测题。"},
         "open_ended_sample":{"name": "OpenEval", "full_name": "开放题评测 (LLM-as-Judge)",
                              "category": "综合能力", "icon": "message-square",
                              "desc": "翻译、总结、代码解释、思维链、创意写作等开放题型，由 Judge 模型自动评分。"},
@@ -601,7 +636,7 @@ def models_add():
         "name": data.get("name", "").strip(),
         "provider": data.get("provider", "").strip(),
         "api_base": data.get("api_base", "").strip(),
-        "api_key": data.get("api_key", "").strip(),
+        "api_key": _encrypt_api_key(data.get("api_key", "").strip()),
         "model_name": data.get("model_name", "").strip(),
         "description": data.get("description", "").strip(),
         "created_at": __import__("time").strftime("%Y-%m-%d %H:%M"),
@@ -629,12 +664,13 @@ def models_delete(model_id: str):
 def models_edit(model_id: str):
     u = session["user"]
     data = request.form
+    api_key_raw = data.get("api_key", "").strip()
     updated = {
         "id": model_id,
         "name": data.get("name", "").strip(),
         "provider": data.get("provider", "").strip(),
         "api_base": data.get("api_base", "").strip(),
-        "api_key": data.get("api_key", "").strip(),
+        "api_key": _encrypt_api_key(api_key_raw) if api_key_raw else "",
         "model_name": data.get("model_name", "").strip(),
         "description": data.get("description", "").strip(),
         "user": u,
@@ -1205,6 +1241,9 @@ def eval_run():
 
     run_ids = []
     for model in selected_models:
+        # 解密 API Key 后传入评测引擎
+        model = dict(model)
+        model["api_key"] = _decrypt_api_key(model.get("api_key", ""))
         run_id = start_eval(model, benchmark_ids, judge_model, quick_mode=quick_mode, user=u)
         run_ids.append(run_id)
 
@@ -2095,7 +2134,11 @@ def agents_run():
     if not prep["ok"]:
         return jsonify({"ok": False, "error": prep.get("error", "准备失败")}), 400
     
-    run_id = start_eval(prep["model"], prep["benchmark_ids"], prep.get("judge_model"), user=session["user"])
+    model = prep["model"]
+    if isinstance(model, dict):
+        model = dict(model)
+        model["api_key"] = _decrypt_api_key(model.get("api_key", ""))
+    run_id = start_eval(model, prep["benchmark_ids"], prep.get("judge_model"), user=session["user"])
     return jsonify({
         "ok": True,
         "run_id": run_id,
@@ -2185,4 +2228,4 @@ if __name__ == "__main__":
     print(f"  退出:  按 Ctrl+C 停止服务器")
     print("=" * 56)
     print()
-    app.run(host="127.0.0.1", port=5001, debug=False)
+    app.run(host="127.0.0.1", port=5001, debug=False, threaded=True)
