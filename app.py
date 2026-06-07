@@ -815,7 +815,8 @@ def api_data_mining_hf():
         return jsonify({"error": "HF 路径不能为空"}), 400
 
     try:
-        results = mine_from_hf(hf_path, config=config, sample_size=sample_size)
+        results = mine_from_hf(hf_path, config=config, sample_size=sample_size,
+                               timeout_secs=90)
         return jsonify({"results": results, "count": len(results), "hf_path": hf_path})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

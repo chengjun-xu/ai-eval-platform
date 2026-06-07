@@ -15,6 +15,10 @@
 """
 from __future__ import annotations
 
+# 设置 HuggingFace 镜像（必须在 datasets 导入前设置）
+import os
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
 import csv
 import json
 import logging
@@ -333,12 +337,72 @@ def mine_from_file(filepath: str, **kwargs) -> list[dict]:
 # ════════════════════════════════════════════════════════════════════════
 
 
+def _is_gated_dataset_error(e: Exception) -> bool:
+    """判断是否为受限数据集（gated dataset）的错误"""
+    msg = str(e).lower()
+    return any(kw in msg for kw in ["gated", "authenticated", "401", "403",
+                                     "cannot access", "repository not found",
+                                     "datasetnotfound", "dataset not found"])
+
+
+def _is_config_error(e: Exception) -> tuple[bool, str]:
+    """判断是否为数据集缺少 config 的错误，返回 (是/否, 可用配置列表)"""
+    msg = str(e)
+    if "config name is missing" in msg.lower() or "pick one among" in msg.lower():
+        import re
+        m = re.search(r"available configs:\s*\[([^\]]+)\]", msg)
+        if m:
+            configs = [c.strip().strip("'\"") for c in m.group(1).split(",")]
+            return True, ", ".join(configs[:10]) + (f" ...共{len(configs)}个" if len(configs) > 10 else "")
+        return True, ""
+    # also catch "BuilderConfig 'xxx' not found" - user provided a wrong config name
+    if "builderconfig" in msg.lower() and "not found" in msg.lower():
+        import re
+        m = re.search(r"available:\s*\[([^\]]+)\]", msg, re.IGNORECASE)
+        if m:
+            configs = [c.strip().strip("'\"") for c in m.group(1).split(",")]
+            return True, ", ".join(configs[:10]) + (f" ...共{len(configs)}个" if len(configs) > 10 else "")
+        return True, ""
+    return False, ""
+
+
+def _load_dataset_with_timeout(hf_path: str, config: str | None,
+                               split: str, timeout_secs: int = 60):
+    """带超时的数据集加载，自动捕获受限数据集错误"""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    from datasets import load_dataset
+
+    def _load():
+        if config:
+            return load_dataset(hf_path, config, split=split,
+                                trust_remote_code=True)
+        return load_dataset(hf_path, split=split,
+                            trust_remote_code=True)
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(_load)
+    try:
+        return future.result(timeout=timeout_secs)
+    except FuturesTimeout:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise TimeoutError(
+            f"⏱ 数据集 {hf_path} 加载超时（超过 {timeout_secs}s）\n"
+            "可能原因：\n"
+            "  1. 数据集过大，建议减小 sample_size 或换用较小的数据集\n"
+            "  2. 网络连接慢，可尝试使用国内镜像（HF_ENDPOINT=https://hf-mirror.com）\n"
+            "  3. 数据集是受限的（Gated Dataset），需要登录认证"
+        )
+    finally:
+        pool.shutdown(wait=False)
+
+
 def mine_from_hf(hf_path: str,
                  config: str | None = None,
                  split: str = "train",
                  sample_size: int = 50,
                  question_field: str | None = None,
-                 answer_field: str | None = None) -> list[dict]:
+                 answer_field: str | None = None,
+                 timeout_secs: int = 60) -> list[dict]:
     """从 HuggingFace 数据集挖掘评测题目
 
     用 LLM 从 HF 数据行中提取 Q&A 对。
@@ -350,30 +414,62 @@ def mine_from_hf(hf_path: str,
         sample_size: 采样数量
         question_field: 指定问题字段（自动检测）
         answer_field: 指定答案字段（自动检测）
+        timeout_secs: 加载超时秒数（默认 60）
 
     Returns:
         [{"id", "question", "answer", "choices", "category", "source"}]
     """
-    from datasets import load_dataset
-
     try:
-        if config:
-            ds = load_dataset(hf_path, config, split=split, trust_remote_code=True)
-        else:
-            ds = load_dataset(hf_path, split=split, trust_remote_code=True)
-    except Exception:
+        ds = _load_dataset_with_timeout(hf_path, config, split,
+                                        timeout_secs=timeout_secs)
+    except Exception as e:
+        if isinstance(e, TimeoutError):
+            raise
+        if _is_gated_dataset_error(e):
+            raise ValueError(
+                f"🔒 数据集 {hf_path} 是受限制的（Gated Dataset）\n\n"
+                "需要以下步骤才能访问：\n"
+                "  1. 在 HuggingFace 官网接受数据集使用协议\n"
+                "     → https://huggingface.co/datasets/" + hf_path + "\n"
+                "  2. 生成 Access Token（Settings → Access Tokens）\n"
+                "  3. 在本机运行：huggingface-cli login 或设置 HF_TOKEN\n\n"
+                "💡 建议：先换一个非受限的数据集试试，例如：\n"
+                "  - gao-gun/meta-math（数学推理）\n"
+                "  - Open-Orca/OpenOrca（通用QA）"
+            )
+        # 检查是否缺少 config（数据集有多个子集但没指定）
+        is_config_err, available = _is_config_error(e)
+        if is_config_err:
+            if config:
+                raise ValueError(
+                    f"❌ 子集 '{config}' 不存在\n\n"
+                    f"数据集 {hf_path} 可用的子集：\n  {available}\n\n"
+                    "💡 在「子集（可选）」输入框中填写其中一个名称"
+                )
+            else:
+                raise ValueError(
+                    f"⚠️ 数据集 {hf_path} 需要指定子集（Config）\n\n"
+                    f"可用子集（请选一个填到「子集（可选）」框）：\n  {available}\n\n"
+                    "💡 例如：cais/mmlu 搭配 abstract_algebra 可挖出代数题"
+                )
         # 尝试其他 split
         for alt in ["test", "validation", "train"]:
             try:
-                if config:
-                    ds = load_dataset(hf_path, config, split=alt, trust_remote_code=True)
-                else:
-                    ds = load_dataset(hf_path, split=alt, trust_remote_code=True)
+                ds = _load_dataset_with_timeout(hf_path, config, alt,
+                                                timeout_secs=timeout_secs)
                 break
             except Exception:
                 continue
         else:
-            raise ValueError(f"无法加载 HF 数据集: {hf_path}")
+            raise ValueError(
+                f"无法加载 HF 数据集: {hf_path}\n"
+                f"错误: {e}\n\n"
+                "💡 常见原因：\n"
+                "  1. 数据集路径有误（检查拼写）\n"
+                "  2. 数据集不存在或已删除\n"
+                "  3. 数据集需要认证（Gated Dataset）\n"
+                "  4. 网络连接问题" 
+            )
 
     # 自动检测字段
     sample = ds[0] if len(ds) > 0 else {}

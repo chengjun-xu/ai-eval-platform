@@ -92,6 +92,44 @@
 {% block scripts %}
 <script>
 let currentResults = [];
+let abortController = null;
+
+// ── 工具：通用 fetch 带超时 ──
+async function fetchWithTimeout(url, options, timeoutMs = 60000) {
+  // 取消上一个请求
+  if (abortController) abortController.abort();
+  abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, { ...options, signal: abortController.signal });
+    clearTimeout(timer);
+    return resp;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      throw new Error(`⏱ 请求超时（超过 ${Math.round(timeoutMs/1000)} 秒），服务器无响应`);
+    }
+    throw err;
+  }
+}
+
+// ── 工具：显示错误结果 ──
+function showError(title, detail, suggestions = []) {
+  const panel = document.getElementById('resultPanel');
+  const container = document.getElementById('resultsContainer');
+  panel.style.display = 'block';
+  document.getElementById('resultTitle').textContent = '❌ ' + title;
+  document.getElementById('resultCount').textContent = '错误';
+  let html = `<div style="padding:1rem;border:1px solid #ef4444;border-radius:var(--radius-sm);background:rgba(239,68,68,0.08)">
+    <div style="color:#ef4444;font-weight:500;margin-bottom:0.5rem">${detail.replace(/\n/g, '<br>')}</div>`;
+  if (suggestions.length) {
+    html += '<div style="margin-top:0.75rem;font-size:0.85rem;color:var(--text-secondary)"><strong>💡 试试：</strong><ul style="margin:0.25rem 0 0 1rem">';
+    suggestions.forEach(s => { html += `<li>${s}</li>`; });
+    html += '</ul></div>';
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
 
 // 文件上传区域点击
 document.getElementById('dropZone').addEventListener('click', function() {
@@ -107,39 +145,69 @@ document.getElementById('fileInput').addEventListener('change', function() {
 async function mineFromText() {
   const text = document.getElementById('rawText').value.trim();
   const strategy = document.getElementById('miningStrategy').value;
-  if (!text) { alert('请先粘贴文本'); return; }
+  if (!text) { showError('输入为空', '请先在文本框中粘贴要挖掘的内容'); return; }
 
   showLoading('正在挖掘文本...');
-  const resp = await fetch('/api/data-mining/text', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({text, strategy, max_questions: 200})
-  });
-  const data = await resp.json();
-  if (data.error) { alert(data.error); hideLoading(); return; }
-  currentResults = data.results || [];
-  renderResults(currentResults, '文本挖掘结果');
-  hideLoading();
+  try {
+    const resp = await fetchWithTimeout('/api/data-mining/text', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, strategy, max_questions: 200})
+    }, 30000);
+    const data = await resp.json();
+    if (data.error) { showError('挖掘失败', data.error); hideLoading(); return; }
+    if (!data.results || data.results.length === 0) {
+      showError('未找到题目',
+        '根据当前文本，规则提取器没有识别到题目。',
+        ['确保文本包含问句（如"什么是..."、"为什么..."）',
+         '尝试加入"问题："或"题目："前缀',
+         '选择题需要包含 A/B/C/D 选项格式',
+         '换用更大段的文本（至少几百字）']);
+      hideLoading(); return;
+    }
+    currentResults = data.results || [];
+    renderResults(currentResults, '文本挖掘结果');
+    hideLoading();
+  } catch (err) {
+    showError('请求失败', err.message || String(err),
+              ['检查服务器是否在运行',
+               '文本是否过大（建议 1 万字以内）']);
+    hideLoading();
+  }
 }
 
 // 从文件挖掘
 async function mineFromFile() {
   const fileInput = document.getElementById('fileInput');
-  if (!fileInput.files.length) { alert('请先选择文件'); return; }
+  if (!fileInput.files.length) { showError('未选择文件', '请先点击或拖拽文件到上传区域'); return; }
 
   showLoading('正在处理文件...');
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
 
-  const resp = await fetch('/api/data-mining/file', {
-    method: 'POST',
-    body: formData
-  });
-  const data = await resp.json();
-  if (data.error) { alert(data.error); hideLoading(); return; }
-  currentResults = data.results || [];
-  renderResults(currentResults, '文件挖掘结果: ' + fileInput.files[0].name);
-  hideLoading();
+  try {
+    const resp = await fetchWithTimeout('/api/data-mining/file', {
+      method: 'POST',
+      body: formData
+    }, 120000);
+    const data = await resp.json();
+    if (data.error) { showError('文件挖掘失败', data.error,
+      ['确保文件是 PDF/DOCX/TXT/CSV/JSON 格式',
+       'PDF 需要安装 pymupdf: pip install pymupdf',
+       'DOCX 需要安装 python-docx: pip install python-docx']); hideLoading(); return; }
+    if (!data.results || data.results.length === 0) {
+      showError('未找到题目', '文件解析完成，但没有提取到题目。',
+        ['文件内容是否包含问句？',
+         'CSV/JSON 请确认有 question/answer 列']);
+      hideLoading(); return;
+    }
+    currentResults = data.results || [];
+    renderResults(currentResults, '文件挖掘结果: ' + fileInput.files[0].name);
+    hideLoading();
+  } catch (err) {
+    showError('请求失败', err.message || String(err));
+    hideLoading();
+  }
 }
 
 // 从HF挖掘
@@ -147,42 +215,88 @@ async function mineFromHF() {
   const path = document.getElementById('hfPath').value.trim();
   const config = document.getElementById('hfConfig').value.trim();
   const sampleSize = parseInt(document.getElementById('hfSampleSize').value) || 50;
-  if (!path) { alert('请输入 HF 路径'); return; }
+  if (!path) { showError('HF 路径为空', '请输入 HuggingFace 数据集路径'); return; }
 
-  showLoading('正在从 HuggingFace 挖掘...');
-  const resp = await fetch('/api/data-mining/hf', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({hf_path: path, config: config || null, sample_size: sampleSize})
-  });
-  const data = await resp.json();
-  if (data.error) { alert(data.error); hideLoading(); return; }
-  currentResults = data.results || [];
-  renderResults(currentResults, 'HF 挖掘结果: ' + path);
-  hideLoading();
+  showLoading('正在从 HuggingFace 挖掘（首次下载可能较慢，请耐心等待）...');
+  try {
+    const resp = await fetchWithTimeout('/api/data-mining/hf', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hf_path: path, config: config || null, sample_size: sampleSize})
+    }, 120000);
+    const data = await resp.json();
+    if (data.error) {
+      let detail = data.error;
+      let suggestions = ['检查数据集路径拼写',
+                         '换一个开放数据集试试（如 cais/mmlu）',
+                         '在 huggingface.co 搜索开放数据集'];
+      if (data.error.includes('Gated') || data.error.includes('受限') || data.error.includes('受限制')) {
+        suggestions = ['该数据集需要登录 HuggingFace 并接受协议',
+                       `去 huggingface.co/datasets/${path} 查看协议`,
+                       '配置 token: huggingface-cli login',
+                       '先尝试开放数据集：gao-gun/meta-math 或 Open-Orca/OpenOrca'];
+      } else if (data.error.includes('超时')) {
+        suggestions = ['数据集可能过大，减小 sample_size',
+                       '换一个小型数据集',
+                       '检查网络连接是否正常'];
+      } else if (data.error.includes('需要指定子集') || data.error.includes('子集不存在')) {
+        suggestions = ['在「子集（可选）」框填入其中一个子集名称',
+                       `例如：${path} 的子集有 abstract_algebra、anatomy 等`,
+                       '如果不知道该填什么，换一个不需要子集的数据集'];
+      }
+      showError('HF 挖掘失败', detail, suggestions);
+      hideLoading(); return;
+    }
+    if (!data.results || data.results.length === 0) {
+      showError('未找到题目',
+        `数据集 ${path} 已加载，但自动检测的字段未找到 QA 对。`,
+        ['尝试选择不同的配置（Config）',
+         '该数据集可能不是问答格式',
+         '换一个 QA/评测类数据集试试']);
+      hideLoading(); return;
+    }
+    currentResults = data.results || [];
+    renderResults(currentResults, 'HF 挖掘结果: ' + path);
+    hideLoading();
+  } catch (err) {
+    showError('请求失败', err.message || String(err),
+              ['网络连接是否正常？',
+               'HuggingFace 在国内访问较慢，可设置镜像']);
+    hideLoading();
+  }
 }
 
 // 注册为benchmark
 async function registerBenchmark() {
   const name = document.getElementById('benchmarkName').value.trim();
-  if (!name) { alert('请输入 benchmark 名称（英文）'); return; }
-  if (currentResults.length === 0) { alert('没有结果可注册'); return; }
+  if (!name) { showError('名称为空', '请输入 benchmark 名称（英文）'); return; }
+  if (currentResults.length === 0) { showError('无结果', '没有结果可注册'); return; }
 
   showLoading('正在注册...');
-  const resp = await fetch('/api/data-mining/register', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({benchmark_name: name, items: currentResults})
-  });
-  const data = await resp.json();
-  if (data.error) { alert(data.error); }
-  else {
-    alert(`✅ 已注册为 ${data.filename}，共 ${data.total} 题`);
-    document.getElementById('benchmarkName').value = '';
-    currentResults = [];
-    renderResults([], '');
+  try {
+    const resp = await fetchWithTimeout('/api/data-mining/register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({benchmark_name: name, items: currentResults})
+    }, 30000);
+    const data = await resp.json();
+    if (data.error) { showError('注册失败', data.error); }
+    else {
+      // 用绿色成功提示替换错误框
+      const panel = document.getElementById('resultPanel');
+      const container = document.getElementById('resultsContainer');
+      document.getElementById('resultTitle').textContent = '✅ 注册成功';
+      document.getElementById('resultCount').textContent = data.total + ' 题';
+      container.innerHTML = `<div style="padding:1rem;border:1px solid #22c55e;border-radius:var(--radius-sm);background:rgba(34,197,94,0.08);color:#22c55e">
+        ✅ 已注册为 <strong>${data.filename}</strong>，共 <strong>${data.total}</strong> 题</div>`;
+      document.getElementById('benchmarkName').value = '';
+      currentResults = [];
+    }
+    hideLoading();
+  } catch (err) {
+    showError('请求失败', err.message || String(err));
+    hideLoading();
   }
-  hideLoading();
 }
 
 // 渲染结果
@@ -225,6 +339,7 @@ function showLoading(msg) {
   const panel = document.getElementById('resultPanel');
   panel.style.display = 'block';
   document.getElementById('resultTitle').textContent = '⏳ ' + (msg || '处理中...');
+  document.getElementById('resultCount').textContent = '⏳';
   document.getElementById('resultsContainer').innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text-muted)">⏳ 处理中，请稍候...</div>';
 }
 
