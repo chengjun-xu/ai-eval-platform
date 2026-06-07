@@ -216,7 +216,12 @@ def load_models(user: str = "") -> list:
     with open(MODELS_FILE, encoding="utf-8") as f:
         all_models = json.load(f)
     if user:
-        return [m for m in all_models if m.get("user", "") == user]
+        all_models = [m for m in all_models if m.get("user", "") == user]
+    # 自动解密 API Key（兼容已加密和未加密的数据）
+    for m in all_models:
+        api_key = m.get("api_key", "")
+        if api_key:
+            m["api_key"] = _decrypt_api_key(api_key)
     return all_models
 
 
@@ -249,7 +254,12 @@ def load_judge_models(user: str = "") -> list:
     with open(JUDGE_MODELS_FILE, encoding="utf-8") as f:
         all_models = json.load(f)
     if user:
-        return [m for m in all_models if m.get("user", "") == user]
+        all_models = [m for m in all_models if m.get("user", "") == user]
+    # 自动解密 API Key
+    for m in all_models:
+        api_key = m.get("api_key", "")
+        if api_key:
+            m["api_key"] = _decrypt_api_key(api_key)
     return all_models
 
 
@@ -719,7 +729,7 @@ def ollama_add_model(model_name: str):
         "name": f"Ollama {model_name}",
         "provider": "Ollama",
         "api_base": "http://localhost:11434/v1",
-        "api_key": "ollama",
+        "api_key": _encrypt_api_key("ollama"),
         "model_name": model_name,
         "description": f"本地 Ollama 模型: {model_name}",
         "created_at": __import__("time").strftime("%Y-%m-%d %H:%M"),
@@ -757,7 +767,7 @@ def judge_models_add():
         "name": data.get("name", "").strip(),
         "provider": data.get("provider", "").strip(),
         "api_base": data.get("api_base", "").strip(),
-        "api_key": data.get("api_key", "").strip(),
+        "api_key": _encrypt_api_key(data.get("api_key", "").strip()),
         "model_name": data.get("model_name", "").strip(),
         "description": data.get("description", "").strip(),
         "created_at": __import__("time").strftime("%Y-%m-%d %H:%M"),
@@ -1242,9 +1252,6 @@ def eval_run():
 
     run_ids = []
     for model in selected_models:
-        # 解密 API Key 后传入评测引擎
-        model = dict(model)
-        model["api_key"] = _decrypt_api_key(model.get("api_key", ""))
         run_id = start_eval(model, benchmark_ids, judge_model, quick_mode=quick_mode, user=u)
         run_ids.append(run_id)
 
@@ -2134,12 +2141,8 @@ def agents_run():
     prep = eval_agent.prepare_eval(intent)
     if not prep["ok"]:
         return jsonify({"ok": False, "error": prep.get("error", "准备失败")}), 400
-    
-    model = prep["model"]
-    if isinstance(model, dict):
-        model = dict(model)
-        model["api_key"] = _decrypt_api_key(model.get("api_key", ""))
-    run_id = start_eval(model, prep["benchmark_ids"], prep.get("judge_model"), user=session["user"])
+
+    run_id = start_eval(prep["model"], prep["benchmark_ids"], prep.get("judge_model"), user=session["user"])
     return jsonify({
         "ok": True,
         "run_id": run_id,
